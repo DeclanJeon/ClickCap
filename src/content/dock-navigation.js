@@ -331,10 +331,29 @@ export class DockNavigation {
   }
 
   show() {
-    if (!document.body.contains(this.host)) {
-      document.body.appendChild(this.host);
+    console.log('[Dock] show() called, isVisible:', this.isVisible);
+    
+    if (!document.body) {
+      console.error('[Dock] document.body not available');
+      return;
     }
+    
+    if (!document.body.contains(this.host)) {
+      console.log('[Dock] Appending host to document.body');
+      document.body.appendChild(this.host);
+    } else {
+      console.log('[Dock] Host already in document.body');
+    }
+    
+    // Force display
+    this.host.style.display = 'block';
+    this.dock.style.display = 'flex';
+    
+    console.log('[Dock] Host computed style:', window.getComputedStyle(this.host).display);
+    console.log('[Dock] Dock computed style:', window.getComputedStyle(this.dock).display);
+    
     this.isVisible = true;
+    console.log('[Dock] Now visible');
   }
 
   hide() {

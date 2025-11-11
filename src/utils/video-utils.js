@@ -12,27 +12,31 @@ export function formatDuration(milliseconds) {
 
 export function formatFileSize(bytes) {
   if (bytes === 0) return '0 B';
-  
+
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  
+
   return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
 }
 
 export function generateFilename(format, prefix = 'recording') {
   const now = new Date();
   const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, -5);
-  return `${prefix}_${timestamp}.${format}`;
+  const randomSuffix = Math.random().toString(36).substring(2, 8);
+  return `${prefix}_${timestamp}_${randomSuffix}.${format.toLowerCase()}`;
 }
 
 export function getMimeType(format) {
   const mimeTypes = {
+    WEBM: 'video/webm;codecs=vp9,opus',
     webm: 'video/webm;codecs=vp9,opus',
+    MP4: 'video/mp4',
     mp4: 'video/mp4',
+    GIF: 'image/gif',
     gif: 'image/gif'
   };
-  return mimeTypes[format] || mimeTypes.webm;
+  return mimeTypes[format] || 'video/webm;codecs=vp9,opus';
 }
 
 export function estimateBitrate(quality) {
@@ -45,63 +49,6 @@ export function estimateBitrate(quality) {
   return bitrateMap[quality] || bitrateMap.HIGH;
 }
 
-export function cropVideoStream(originalStream, cropArea, fps = 30) {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement('video');
-    video.srcObject = originalStream;
-    video.muted = true;
-    
-    video.onloadedmetadata = () => {
-      video.play();
-      
-      const canvas = document.createElement('canvas');
-      canvas.width = cropArea.width;
-      canvas.height = cropArea.height;
-      const ctx = canvas.getContext('2d');
-
-      let animationId;
-      const drawFrame = () => {
-        ctx.drawImage(
-          video,
-          cropArea.x,
-          cropArea.y,
-          cropArea.width,
-          cropArea.height,
-          0,
-          0,
-          cropArea.width,
-          cropArea.height
-        );
-        animationId = requestAnimationFrame(drawFrame);
-      };
-      drawFrame();
-
-      const croppedVideoStream = canvas.captureStream(fps);
-      
-      const audioTrack = originalStream.getAudioTracks()[0];
-      if (audioTrack) {
-        croppedVideoStream.addTrack(audioTrack);
-      }
-
-      resolve({
-        stream: croppedVideoStream,
-        cleanup: () => {
-          cancelAnimationFrame(animationId);
-          video.srcObject = null;
-          video.remove();
-          canvas.remove();
-        }
-      });
-    };
-
-    video.onerror = (error) => reject(error);
-  });
-}
-
-export async function mergeBlobs(blobs) {
-  return new Blob(blobs, { type: blobs[0].type });
-}
-
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -110,7 +57,10 @@ export function downloadBlob(blob, filename) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 100);
 }
 
 export async function blobToBase64(blob) {
@@ -120,4 +70,31 @@ export async function blobToBase64(blob) {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
+}
+
+export function calculateCropArea(sourceWidth, sourceHeight, cropArea) {
+  if (!cropArea) {
+    return {
+      sourceX: 0,
+      sourceY: 0,
+      sourceWidth,
+      sourceHeight,
+      destWidth: sourceWidth,
+      destHeight: sourceHeight
+    };
+  }
+
+  const sourceX = Math.max(0, Math.min(cropArea.x, sourceWidth));
+  const sourceY = Math.max(0, Math.min(cropArea.y, sourceHeight));
+  const sourceWidth_ = Math.max(1, Math.min(cropArea.width, sourceWidth - sourceX));
+  const sourceHeight_ = Math.max(1, Math.min(cropArea.height, sourceHeight - sourceY));
+
+  return {
+    sourceX,
+    sourceY,
+    sourceWidth: sourceWidth_,
+    sourceHeight: sourceHeight_,
+    destWidth: sourceWidth_,
+    destHeight: sourceHeight_
+  };
 }

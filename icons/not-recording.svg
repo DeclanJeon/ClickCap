@@ -1,0 +1,54 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 보라색 그라데이션 -->
+    <linearGradient id="idleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+    
+    <filter id="softShadow">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
+      <feOffset dx="0" dy="2" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.2"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <radialGradient id="idleShine" cx="35%" cy="35%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.3" />
+      <stop offset="100%" style="stop-color:#ffffff;stop-opacity:0" />
+    </radialGradient>
+  </defs>
+  
+  <!-- 배경 원 -->
+  <circle cx="64" cy="64" r="58" fill="url(#idleGrad)" filter="url(#softShadow)"/>
+  
+  <!-- 광택 -->
+  <circle cx="64" cy="64" r="58" fill="url(#idleShine)"/>
+  
+  <!-- 카메라 본체 -->
+  <rect x="36" y="44" width="56" height="40" rx="6" fill="#ffffff" opacity="0.9"/>
+  
+  <!-- 렌즈 외곽 -->
+  <circle cx="64" cy="64" r="18" fill="#555555"/>
+  
+  <!-- 렌즈 (초록색 - 준비 상태) -->
+  <circle cx="64" cy="64" r="14" fill="#4ade80"/>
+  
+  <!-- 렌즈 하이라이트 -->
+  <circle cx="58" cy="58" r="5" fill="#6ee7a7" opacity="0.8"/>
+  <circle cx="60" cy="60" r="3" fill="#ffffff" opacity="0.6"/>
+  
+  <!-- 준비 표시등 -->
+  <circle cx="82" cy="50" r="4" fill="#4ade80" opacity="0.8"/>
+  
+  <!-- 뷰파인더 -->
+  <rect x="78" y="46" width="10" height="8" rx="2" fill="#555555" opacity="0.7"/>
+  
+  <!-- READY 텍스트 -->
+ <text x="64" y="100" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#ffffff" text-anchor="middle" opacity="0.7">READY</text>
+</svg>

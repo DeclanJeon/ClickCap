@@ -15,7 +15,10 @@ export const MESSAGE_TYPES = {
   SHOW_DOCK: 'show-dock',
   HIDE_DOCK: 'hide-dock',
   UPDATE_DOCK_STATS: 'update-dock-stats',
-  RECORDING_STATE_CHANGED: 'recording-state-changed'
+  RECORDING_STATE_CHANGED: 'recording-state-changed',
+  CONTENT_SCRIPT_READY: 'content-script-ready',
+  OFFSCREEN_READY: 'offscreen-ready',
+  HEALTH_CHECK: 'health-check'
 };
 
 export const RECORDING_STATES = {
@@ -47,7 +50,9 @@ export const FORMATS = {
 export const STORAGE_KEYS = {
   RECORDING_STATE: 'recordingState',
   USER_PREFERENCES: 'userPreferences',
-  RECORDING_DATA: 'recordingData'
+  RECORDING_DATA: 'recordingData',
+  OFFSCREEN_STATE: 'offscreenState',
+  LAST_RECORDING_ID: 'lastRecordingId'
 };
 
 export const DEFAULT_PREFERENCES = {
@@ -56,5 +61,12 @@ export const DEFAULT_PREFERENCES = {
   format: 'WEBM',
   includeAudio: true,
   laserPointerEnabled: false,
-  clickZoomEnabled: true
+  clickZoomEnabled: true,
+  showDock: true
 };
+
+export const CHUNK_SIZE_LIMIT = 10 * 1024 * 1024;
+
+export const KEEP_ALIVE_INTERVAL = 45000;
+
+export const STATE_STALE_TIMEOUT = 10 * 60 * 1000;

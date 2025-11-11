@@ -1,14 +1,16 @@
 {
   "name": "Advanced Screen Recorder",
-  "description": "Professional screen recording with area selection, laser pointer, and format conversion",
-  "version": "2.0.0",
+  "description": "Professional screen recording with area selection and laser pointer",
+  "version": "2.2.1",
   "manifest_version": 3,
   "minimum_chrome_version": "116",
+
   "icons": {
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
+
   "action": {
     "default_icon": {
       "16": "icons/icon-16.png",
@@ -18,19 +20,12 @@
     "default_popup": "src/popup/popup.html",
     "default_title": "Advanced Screen Recorder"
   },
+
   "background": {
     "service_worker": "src/background/service-worker.js",
     "type": "module"
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["src/content/content-script.js"],
-      "css": ["src/content/content-styles.css"],
-      "run_at": "document_idle",
-      "all_frames": false
-    }
-  ],
+
   "permissions": [
     "tabCapture",
     "offscreen",
@@ -39,9 +34,11 @@
     "activeTab",
     "scripting"
   ],
+
   "host_permissions": [
     "<all_urls>"
   ],
+
   "commands": {
     "toggle-recording": {
       "suggested_key": {
@@ -65,14 +62,17 @@
       "description": "Toggle laser pointer"
     }
   },
+
   "web_accessible_resources": [
     {
       "resources": [
-        "src/offscreen/offscreen.html",
-        "src/content/dock-styles.css",
-        "icons/*.png"
+        "src/offscreen/offscreen.html"
       ],
       "matches": ["<all_urls>"]
     }
-  ]
+  ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
 }

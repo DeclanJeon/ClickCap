@@ -5,18 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Offscreen Document</title>
   <style>
-    body {
+    html, body {
       margin: 0;
       padding: 0;
       background: #000;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
     }
-    #canvas {
-      display: none;
+    /* 캔버스는 렌더 파이프에 남기기 위해 DOM에 붙이되 화면 밖으로 보냄 (display:none 금지) */
+    #rec-canvas {
+      position: fixed;
+      left: -10000px;
+      top: -10000px;
+      width: 2px;
+      height: 2px;
+      opacity: 0;
+      pointer-events: none;
+      z-index: -1;
     }
   </style>
 </head>
 <body>
-  <canvas id="canvas"></canvas>
+  <canvas id="rec-canvas"></canvas>
   <script type="module" src="offscreen.js"></script>
 </body>
 </html>

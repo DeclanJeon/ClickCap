@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -18,48 +18,48 @@
       </div>
       <div class="status" id="status">
         <span class="status-dot"></span>
-        <span class="status-text">Ready</span>
+        <span class="status-text">준비됨</span>
       </div>
     </header>
 
     <main>
       <section class="recording-mode">
-        <h2>Recording Mode</h2>
+        <h2>녹화 모드</h2>
         <div class="mode-options">
           <label class="mode-option">
             <input type="radio" name="mode" value="full-screen" checked>
             <div class="mode-card">
               <div class="mode-icon">🖥️</div>
-              <div class="mode-label">Full Screen</div>
-              <div class="mode-description">Record entire browser tab</div>
+              <div class="mode-label">전체 화면</div>
+              <div class="mode-description">전체 탭 녹화</div>
             </div>
           </label>
           <label class="mode-option">
             <input type="radio" name="mode" value="area">
             <div class="mode-card">
-              <div class="mode-icon">✂️</div>
-              <div class="mode-label">Select Area</div>
-              <div class="mode-description">Choose specific region</div>
+              <div class="mode-icon">📍</div>
+              <div class="mode-label">영역 선택</div>
+              <div class="mode-description">특정 영역만 녹화</div>
             </div>
           </label>
         </div>
       </section>
 
       <section class="settings">
-        <h2>Settings</h2>
-        
+        <h2>설정</h2>
+
         <div class="setting-group">
-          <label for="quality">Video Quality</label>
+          <label for="quality">비디오 품질</label>
           <select id="quality">
-            <option value="LOW">Low (2 Mbps)</option>
-            <option value="MEDIUM">Medium (5 Mbps)</option>
-            <option value="HIGH" selected>High (8 Mbps)</option>
-            <option value="ULTRA">Ultra (15 Mbps)</option>
+            <option value="LOW">낮음 (2 Mbps)</option>
+            <option value="MEDIUM">중간 (5 Mbps)</option>
+            <option value="HIGH" selected>높음 (8 Mbps)</option>
+            <option value="ULTRA">매우 높음 (15 Mbps)</option>
           </select>
         </div>
 
         <div class="setting-group">
-          <label for="fps">Frame Rate</label>
+          <label for="fps">프레임 속도</label>
           <select id="fps">
             <option value="24">24 FPS</option>
             <option value="30" selected>30 FPS</option>
@@ -68,50 +68,51 @@
         </div>
 
         <div class="setting-group">
-          <label for="format">Output Format</label>
+          <label for="format">출력 형식</label>
           <select id="format">
             <option value="WEBM" selected>WebM</option>
             <option value="MP4">MP4</option>
-            <option value="GIF">GIF</option>
           </select>
         </div>
 
         <div class="setting-group checkbox-group">
           <label>
             <input type="checkbox" id="includeAudio" checked>
-            <span>Include Audio</span>
+            <span>오디오 포함</span>
           </label>
         </div>
 
         <div class="setting-group checkbox-group">
           <label>
             <input type="checkbox" id="laserPointer">
-            <span>Enable Laser Pointer</span>
+            <span>레이저 포인터 활성화</span>
           </label>
         </div>
 
         <div class="setting-group checkbox-group">
           <label>
             <input type="checkbox" id="clickZoom" checked>
-            <span>Click Zoom Effect</span>
+            <span>클릭 줌 효과</span>
+          </label>
+        </div>
+
+        <div class="setting-group checkbox-group">
+          <label>
+            <input type="checkbox" id="showDock" checked>
+            <span>녹화 중 도크 표시</span>
           </label>
         </div>
       </section>
 
       <section class="actions">
         <button id="startBtn" class="btn btn-primary">
-          <span class="btn-icon">⏺</span>
-          <span class="btn-text">Start Recording</span>
+          <span class="btn-icon">⏹️</span>
+          <span class="btn-text">녹화 시작</span>
         </button>
         <button id="stopBtn" class="btn btn-danger" style="display: none;">
-          <span class="btn-icon">⏹</span>
-          <span class="btn-text">Stop Recording</span>
+          <span class="btn-icon">⏹️</span>
+          <span class="btn-text">녹화 중지</span>
         </button>
-      </section>
-
-      <section class="recordings" id="recordingsSection" style="display: none;">
-        <h2>Recent Recordings</h2>
-        <div id="recordingsList" class="recordings-list"></div>
       </section>
     </main>
 
@@ -119,15 +120,15 @@
       <div class="shortcuts">
         <div class="shortcut">
           <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>R</kbd>
-          <span>Toggle Recording</span>
+          <span>녹화 시작/중지</span>
         </div>
         <div class="shortcut">
           <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd>
-          <span>Pause/Resume</span>
+          <span>일시 중지/재개</span>
         </div>
         <div class="shortcut">
           <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd>
-          <span>Toggle Laser</span>
+          <span>레이저 토글</span>
         </div>
       </div>
     </footer>

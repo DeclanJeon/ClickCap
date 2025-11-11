@@ -1,424 +1,198 @@
-const MESSAGE_TYPES = {
-  START_RECORDING: 'start-recording',
-  STOP_RECORDING: 'stop-recording',
-  PAUSE_RECORDING: 'pause-recording',
-  RESUME_RECORDING: 'resume-recording',
-  CANCEL_RECORDING: 'cancel-recording',
-  AREA_SELECTED: 'area-selected',
-  RECORDING_STATS: 'recording-stats',
-  RECORDING_COMMAND: 'recording-command',
-  MOUSE_MOVE: 'mouse-move',
-  MOUSE_CLICK: 'mouse-click',
-  TOGGLE_LASER: 'toggle-laser',
-  SHOW_AREA_SELECTOR: 'show-area-selector',
-  HIDE_AREA_SELECTOR: 'hide-area-selector',
-  SHOW_DOCK: 'show-dock',
-  HIDE_DOCK: 'hide-dock',
-  UPDATE_DOCK_STATS: 'update-dock-stats',
-  RECORDING_STATE_CHANGED: 'recording-state-changed'
-};
+import { MESSAGE_TYPES, STORAGE_KEYS, DEFAULT_PREFERENCES } from '../utils/constants.js';
+import { storageManager } from '../utils/storage.js';
 
-const STORAGE_KEYS = {
-  RECORDING_STATE: 'recordingState',
-  USER_PREFERENCES: 'userPreferences',
-  RECORDING_DATA: 'recordingData'
-};
-
-const DEFAULT_PREFERENCES = {
-  quality: 'HIGH',
-  fps: 30,
-  format: 'WEBM',
-  includeAudio: true,
-  laserPointerEnabled: false,
-  clickZoomEnabled: true
-};
-
-class StorageManager {
-  constructor() {
-    this.dbName = 'ScreenRecorderDB';
-    this.dbVersion = 1;
-    this.db = null;
-  }
-
-  async init() {
+class SafeChrome {
+  static sendMessage(message) {
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, this.dbVersion);
-
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve(this.db);
-      };
-
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        
-        if (!db.objectStoreNames.contains('recordings')) {
-          const objectStore = db.createObjectStore('recordings', { keyPath: 'id', autoIncrement: true });
-          objectStore.createIndex('timestamp', 'timestamp', { unique: false });
-          objectStore.createIndex('filename', 'filename', { unique: false });
-        }
-
-        if (!db.objectStoreNames.contains('chunks')) {
-          const chunksStore = db.createObjectStore('chunks', { keyPath: 'id', autoIncrement: true });
-          chunksStore.createIndex('recordingId', 'recordingId', { unique: false });
-          chunksStore.createIndex('sequence', 'sequence', { unique: false });
-        }
-      };
-    });
-  }
-
-  async saveChromeStorage(key, value) {
-    return new Promise((resolve) => {
-      chrome.storage.local.set({ [key]: value }, resolve);
-    });
-  }
-
-  async getChromeStorage(key) {
-    return new Promise((resolve) => {
-      chrome.storage.local.get([key], (result) => {
-        resolve(result[key]);
-      });
-    });
-  }
-}
-
-const storageManager = new StorageManager();
-
-class MessageHandler {
-  constructor() {
-    this.listeners = new Map();
-  }
-
-  on(messageType, callback) {
-    if (!this.listeners.has(messageType)) {
-      this.listeners.set(messageType, []);
-    }
-    this.listeners.get(messageType).push(callback);
-  }
-
-  async handle(message, sender, sendResponse) {
-    const callbacks = this.listeners.get(message.type);
-    if (callbacks && callbacks.length > 0) {
-      for (const callback of callbacks) {
-        try {
-          const result = await callback(message, sender);
-          if (result !== undefined) {
-            sendResponse(result);
-            return true;
-          }
-        } catch (error) {
-          console.error(`Error handling message ${message.type}:`, error);
-          sendResponse({ error: error.message });
-          return true;
-        }
+      try {
+        chrome.runtime.sendMessage(message, (res) => {
+          if (chrome.runtime.lastError) return reject(chrome.runtime.lastError);
+          resolve(res || { success: true });
+        });
+      } catch (e) {
+        reject(e);
       }
-    }
-    return false;
+    });
+  }
+  static sendTabMessage(tabId, message) {
+    return new Promise((resolve) => {
+      try {
+        chrome.tabs.sendMessage(tabId, message, (res) => {
+          if (chrome.runtime.lastError) {
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(res || { success: true });
+          }
+        });
+      } catch (e) {
+        resolve({ success: false, error: e.message });
+      }
+    });
   }
 }
 
-class RecordingManager {
+class ServiceWorkerMain {
   constructor() {
     this.state = {
+      currentTabId: null,
       isRecording: false,
       isPaused: false,
-      recordingMode: null,
-      cropArea: null,
-      streamId: null,
-      startTime: null,
-      currentTabId: null,
-      currentRecordingId: null
+      cropArea: null
     };
-    
-    this.messageHandler = new MessageHandler();
-    this.setupMessageHandlers();
-    this.setupCommandHandlers();
-    this.init();
+    this.setup();
   }
 
-  async init() {
-    await storageManager.init();
-    await this.loadState();
-    
-    const preferences = await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES);
-    if (!preferences) {
-      await storageManager.saveChromeStorage(STORAGE_KEYS.USER_PREFERENCES, DEFAULT_PREFERENCES);
-    }
-
-    if (this.state.isRecording) {
-      await this.recoverRecording();
-    }
-  }
-
-  setupMessageHandlers() {
-    this.messageHandler.on(MESSAGE_TYPES.START_RECORDING, this.handleStartRecording.bind(this));
-    this.messageHandler.on(MESSAGE_TYPES.STOP_RECORDING, this.handleStopRecording.bind(this));
-    this.messageHandler.on(MESSAGE_TYPES.PAUSE_RECORDING, this.handlePauseRecording.bind(this));
-    this.messageHandler.on(MESSAGE_TYPES.RESUME_RECORDING, this.handleResumeRecording.bind(this));
-    this.messageHandler.on(MESSAGE_TYPES.CANCEL_RECORDING, this.handleCancelRecording.bind(this));
-    this.messageHandler.on(MESSAGE_TYPES.AREA_SELECTED, this.handleAreaSelected.bind(this));
-    this.messageHandler.on(MESSAGE_TYPES.RECORDING_COMMAND, this.handleRecordingCommand.bind(this));
+  setup() {
+    chrome.runtime.onInstalled.addListener(() => this.init());
+    chrome.runtime.onStartup.addListener(() => this.init());
 
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      this.messageHandler.handle(message, sender, sendResponse);
+      this.handle(message, sender).then(sendResponse).catch((e) => {
+        console.error('[SW] handle error', e);
+        sendResponse({ success: false, error: e.message });
+      });
       return true;
     });
   }
 
-  setupCommandHandlers() {
-    chrome.commands.onCommand.addListener((command) => {
-      switch (command) {
-        case 'toggle-recording':
-          this.toggleRecording();
-          break;
-        case 'pause-recording':
-          this.togglePause();
-          break;
-        case 'toggle-laser':
-          this.toggleLaser();
-          break;
-      }
-    });
+  async init() {
+    await storageManager.init();
+    console.log('[Service Worker] Initialization complete');
   }
 
-  async handleStartRecording(message) {
-    const { mode, preferences } = message.data;
-    
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    this.state.currentTabId = tab.id;
-    this.state.recordingMode = mode;
+  async handle(message, sender) {
+    switch (message.type) {
+      case MESSAGE_TYPES.CONTENT_SCRIPT_READY:
+        // noop
+        return { success: true };
+      case MESSAGE_TYPES.START_RECORDING:
+        return this.startCmd(message.data);
+      case MESSAGE_TYPES.AREA_SELECTED:
+        return this.areaSelected(message.data);
+      case MESSAGE_TYPES.OFFSCREEN_READY:
+        return { success: true };
+      case MESSAGE_TYPES.RECORDING_STATS:
+        return this.forwardStats(message.data);
+      case MESSAGE_TYPES.STOP_RECORDING:
+        return this.stopCmd();
+      case MESSAGE_TYPES.RECORDING_COMMAND:
+        return this.recordingCommand(message.command);
+      default:
+        return { success: true };
+    }
+  }
 
-    if (mode === 'area') {
-      await chrome.tabs.sendMessage(tab.id, {
-        type: MESSAGE_TYPES.SHOW_AREA_SELECTOR
+  async ensureContentScript(tabId) {
+    const ping = await SafeChrome.sendTabMessage(tabId, { type: 'ping' });
+    if (ping?.success) return true;
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content/content-script.js'] });
+    await new Promise((r) => setTimeout(r, 300));
+    const ping2 = await SafeChrome.sendTabMessage(tabId, { type: 'ping' });
+    return ping2?.success;
+  }
+
+  async ensureOffscreen() {
+    const ctx = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
+    if (ctx.length === 0) {
+      await chrome.offscreen.createDocument({
+        url: 'src/offscreen/offscreen.html',
+        reasons: ['USER_MEDIA'],
+        justification: 'Screen recording'
       });
-    } else {
-      await this.startCapture(null, preferences);
+    }
+  }
+
+  async startCmd({ mode, preferences }) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) return { success: false, error: 'No active tab' };
+    if (String(tab.url).startsWith('chrome://') || String(tab.url).startsWith('chrome-extension://')) {
+      return { success: false, error: 'Cannot record chrome:// or extension pages' };
     }
 
+    this.state.currentTabId = tab.id;
+
+    const ok = await this.ensureContentScript(tab.id);
+    if (!ok) return { success: false, error: 'Content script not ready' };
+
+    if (mode === 'area') {
+      await SafeChrome.sendTabMessage(tab.id, { type: MESSAGE_TYPES.SHOW_AREA_SELECTOR });
+    } else {
+      await this.startCapture(null, preferences);
+      await this.showDockWithRetry();
+    }
     return { success: true };
   }
 
-  async handleAreaSelected(message) {
-    const { cropArea } = message.data;
+  async areaSelected({ cropArea }) {
     this.state.cropArea = cropArea;
-
-    await chrome.tabs.sendMessage(this.state.currentTabId, {
-      type: MESSAGE_TYPES.HIDE_AREA_SELECTOR
-    });
-
-    const preferences = await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES);
-    await this.startCapture(cropArea, preferences);
-
+    await SafeChrome.sendTabMessage(this.state.currentTabId, { type: MESSAGE_TYPES.HIDE_AREA_SELECTOR });
+    const prefs = (await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES)) || DEFAULT_PREFERENCES;
+    await this.startCapture(cropArea, prefs);
+    await this.showDockWithRetry();
     return { success: true };
+  }
+
+  async showDockWithRetry() {
+    if (!this.state.currentTabId) return;
+    for (let i = 0; i < 5; i++) {
+      const res = await SafeChrome.sendTabMessage(this.state.currentTabId, { type: MESSAGE_TYPES.SHOW_DOCK });
+      if (res?.success) return;
+      await new Promise((r) => setTimeout(r, 200));
+    }
   }
 
   async startCapture(cropArea, preferences) {
-    try {
-      const streamId = await chrome.tabCapture.getMediaStreamId({
-        targetTabId: this.state.currentTabId
-      });
+    await this.ensureOffscreen();
+    await new Promise((r) => setTimeout(r, 200));
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: this.state.currentTabId });
 
-      this.state.streamId = streamId;
-      this.state.startTime = Date.now();
-      this.state.isRecording = true;
-      this.state.isPaused = false;
-
-      await this.ensureOffscreenDocument();
-
-      await chrome.runtime.sendMessage({
-        type: MESSAGE_TYPES.START_RECORDING,
-        target: 'offscreen',
-        data: {
-          streamId,
-          cropArea,
-          preferences
-        }
-      });
-
-      await chrome.tabs.sendMessage(this.state.currentTabId, {
-        type: MESSAGE_TYPES.SHOW_DOCK
-      });
-
-      await chrome.action.setIcon({ path: '/icons/recording.png' });
-
-      await this.saveState();
-
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to start capture:', error);
-      this.state.isRecording = false;
-      return { success: false, error: error.message };
-    }
-  }
-
-  async handleStopRecording() {
-    if (!this.state.isRecording) {
-      return { success: false, error: 'Not recording' };
-    }
-
-    try {
-      await chrome.runtime.sendMessage({
-        type: MESSAGE_TYPES.STOP_RECORDING,
-        target: 'offscreen'
-      });
-
-      this.state.isRecording = false;
-      this.state.isPaused = false;
-      this.state.streamId = null;
-
-      if (this.state.currentTabId) {
-        await chrome.tabs.sendMessage(this.state.currentTabId, {
-          type: MESSAGE_TYPES.HIDE_DOCK
-        }).catch(() => {});
-      }
-
-      await chrome.action.setIcon({ path: '/icons/not-recording.png' });
-
-      await this.saveState();
-
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to stop recording:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  async handlePauseRecording() {
-    if (!this.state.isRecording || this.state.isPaused) {
-      return { success: false };
-    }
-
-    await chrome.runtime.sendMessage({
-      type: MESSAGE_TYPES.PAUSE_RECORDING,
-      target: 'offscreen'
+    const res = await SafeChrome.sendMessage({
+      type: MESSAGE_TYPES.START_RECORDING,
+      target: 'offscreen',
+      data: { streamId, cropArea, preferences }
     });
 
-    this.state.isPaused = true;
-    await this.saveState();
-
-    return { success: true };
+    if (!res?.success) throw new Error(res?.error || 'Offscreen failed');
+    this.state.isRecording = true;
   }
 
-  async handleResumeRecording() {
-    if (!this.state.isRecording || !this.state.isPaused) {
-      return { success: false };
-    }
-
-    await chrome.runtime.sendMessage({
-      type: MESSAGE_TYPES.RESUME_RECORDING,
-      target: 'offscreen'
-    });
-
-    this.state.isPaused = false;
-    await this.saveState();
-
-    return { success: true };
-  }
-
-  async handleCancelRecording() {
-    await chrome.runtime.sendMessage({
-      type: MESSAGE_TYPES.CANCEL_RECORDING,
-      target: 'offscreen'
-    });
-
-    this.state.isRecording = false;
-    this.state.isPaused = false;
-    this.state.streamId = null;
-
+  async forwardStats(data) {
     if (this.state.currentTabId) {
-      await chrome.tabs.sendMessage(this.state.currentTabId, {
-        type: MESSAGE_TYPES.HIDE_DOCK
-      }).catch(() => {});
+      await SafeChrome.sendTabMessage(this.state.currentTabId, {
+        type: MESSAGE_TYPES.UPDATE_DOCK_STATS,
+        data
+      });
     }
-
-    await chrome.action.setIcon({ path: '/icons/not-recording.png' });
-    await this.saveState();
-
     return { success: true };
   }
 
-  async handleRecordingCommand(message) {
-    const { command } = message;
+  async stopCmd() {
+    await SafeChrome.sendMessage({ type: MESSAGE_TYPES.STOP_RECORDING, target: 'offscreen' });
+    this.state.isRecording = false;
+    if (this.state.currentTabId) {
+      await SafeChrome.sendTabMessage(this.state.currentTabId, { type: MESSAGE_TYPES.HIDE_DOCK });
+    }
+    return { success: true };
+  }
 
+  async recordingCommand(command) {
     switch (command) {
       case 'pause':
-        return this.state.isPaused ? this.handleResumeRecording() : this.handlePauseRecording();
+        if (this.state.isPaused) {
+          await SafeChrome.sendMessage({ type: 'resume-recording', target: 'offscreen' });
+          this.state.isPaused = false;
+        } else {
+          await SafeChrome.sendMessage({ type: 'pause-recording', target: 'offscreen' });
+          this.state.isPaused = true;
+        }
+        return { success: true };
       case 'stop':
-        return this.handleStopRecording();
-      case 'cancel':
-        return this.handleCancelRecording();
+        return this.stopCmd();
       default:
         return { success: false, error: 'Unknown command' };
     }
   }
-
-  async toggleRecording() {
-    if (this.state.isRecording) {
-      await this.handleStopRecording();
-    } else {
-      const preferences = await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES);
-      await this.handleStartRecording({
-        data: {
-          mode: 'full-screen',
-          preferences
-        }
-      });
-    }
-  }
-
-  async togglePause() {
-    if (this.state.isPaused) {
-      await this.handleResumeRecording();
-    } else {
-      await this.handlePauseRecording();
-    }
-  }
-
-  async toggleLaser() {
-    if (this.state.currentTabId) {
-      await chrome.tabs.sendMessage(this.state.currentTabId, {
-        type: MESSAGE_TYPES.TOGGLE_LASER
-      }).catch(() => {});
-    }
-  }
-
-  async ensureOffscreenDocument() {
-    const existingContexts = await chrome.runtime.getContexts({
-      contextTypes: ['OFFSCREEN_DOCUMENT']
-    });
-
-    if (existingContexts.length === 0) {
-      await chrome.offscreen.createDocument({
-        url: 'src/offscreen/offscreen.html',
-        reasons: ['USER_MEDIA'],
-        justification: 'Recording from chrome.tabCapture API'
-      });
-    }
-  }
-
-  async recoverRecording() {
-    console.log('Recovering recording session...');
-    await this.ensureOffscreenDocument();
-    
-    if (this.state.currentTabId) {
-      await chrome.tabs.sendMessage(this.state.currentTabId, {
-        type: MESSAGE_TYPES.SHOW_DOCK
-      }).catch(() => {});
-    }
-  }
-
-  async saveState() {
-    await storageManager.saveChromeStorage(STORAGE_KEYS.RECORDING_STATE, this.state);
-  }
-
-  async loadState() {
-    const savedState = await storageManager.getChromeStorage(STORAGE_KEYS.RECORDING_STATE);
-    if (savedState) {
-      this.state = { ...this.state, ...savedState };
-    }
-  }
 }
 
-const recordingManager = new RecordingManager();
+new ServiceWorkerMain();
+console.log('[Service Worker] Loaded and ready');

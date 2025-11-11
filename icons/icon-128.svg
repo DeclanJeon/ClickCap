@@ -1,0 +1,61 @@
+<svg width="128" height="128" viewBox="0 0 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 그라데이션 배경 -->
+    <linearGradient id="mainGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- 그림자 효과 -->
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3"/>
+      <feOffset dx="0" dy="4" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.3"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <!-- 내부 광택 -->
+    <radialGradient id="shine" cx="40%" cy="40%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.3" />
+      <stop offset="100%" style="stop-color:#ffffff;stop-opacity:0" />
+    </radialGradient>
+  </defs>
+  
+  <!-- 배경 원 -->
+  <circle cx="64" cy="64" r="58" fill="url(#mainGrad)" filter="url(#shadow)"/>
+  
+  <!-- 광택 효과 -->
+  <circle cx="64" cy="64" r="58" fill="url(#shine)"/>
+  
+  <!-- 카메라 본체 -->
+  <rect x="36" y="44" width="56" height="40" rx="6" fill="#ffffff" opacity="0.95"/>
+  
+  <!-- 렌즈 외곽 -->
+  <circle cx="64" cy="64" r="18" fill="#333333"/>
+  
+  <!-- 렌즈 -->
+  <circle cx="64" cy="64" r="14" fill="#ff0000"/>
+  
+  <!-- 렌즈 하이라이트 -->
+  <circle cx="58" cy="58" r="5" fill="#ff6666" opacity="0.8"/>
+  <circle cx="60" cy="60" r="3" fill="#ffffff" opacity="0.6"/>
+  
+  <!-- 녹화 표시등 -->
+  <circle cx="82" cy="50" r="4" fill="#ff0000">
+    <animate attributeName="opacity" values="1;0.3;1" dur="1.5s" repeatCount="indefinite"/>
+  </circle>
+  
+  <!-- 뷰파인더 -->
+  <rect x="78" y="46" width="10" height="8" rx="2" fill="#333333" opacity="0.8"/>
+  
+  <!-- 펄스 효과 -->
+  <circle cx="64" cy="64" r="18" fill="none" stroke="#ff0000" stroke-width="2" opacity="0">
+    <animate attributeName="r" values="18;32;18" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.6;0;0.6" dur="2s" repeatCount="indefinite"/>
+  </circle>
+</svg>
