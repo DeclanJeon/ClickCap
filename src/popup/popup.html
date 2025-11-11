@@ -11,17 +11,16 @@
     <header>
       <div class="logo">
         <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-          <circle cx="16" cy="16" r="14" fill="#ff0000" opacity="0.2"/>
-          <circle cx="16" cy="16" r="8" fill="#ff0000"/>
+          <circle cx="16" cy="16" r="14" fill="#ff0000" opacity="0.2"></circle>
+          <circle cx="16" cy="16" r="8" fill="#ff0000"></circle>
         </svg>
         <h1>Screen Recorder</h1>
       </div>
       <div class="status" id="status">
         <span class="status-dot"></span>
-        <span class="status-text">준비됨</span>
+        <span class="status-text"></span>
       </div>
     </header>
-
     <main>
       <section class="recording-mode">
         <h2>녹화 모드</h2>
@@ -29,111 +28,113 @@
           <label class="mode-option">
             <input type="radio" name="mode" value="full-screen" checked>
             <div class="mode-card">
-              <div class="mode-icon">🖥️</div>
-              <div class="mode-label">전체 화면</div>
-              <div class="mode-description">전체 탭 녹화</div>
+              <div class="mode-icon"></div>
+              <div class="mode-label">전체 탭</div>
+              <div class="mode-description">현재 탭 전체를 녹화합니다</div>
             </div>
           </label>
           <label class="mode-option">
             <input type="radio" name="mode" value="area">
             <div class="mode-card">
-              <div class="mode-icon">📍</div>
-              <div class="mode-label">영역 선택</div>
-              <div class="mode-description">특정 영역만 녹화</div>
+              <div class="mode-icon"></div>
+              <div class="mode-label">영역 지정</div>
+              <div class="mode-description">드래그로 지정한 영역만 녹화합니다</div>
             </div>
           </label>
         </div>
       </section>
-
       <section class="settings">
         <h2>설정</h2>
-
         <div class="setting-group">
-          <label for="quality">비디오 품질</label>
+          <label for="quality">화질</label>
           <select id="quality">
             <option value="LOW">낮음 (2 Mbps)</option>
-            <option value="MEDIUM">중간 (5 Mbps)</option>
+            <option value="MEDIUM">보통 (5 Mbps)</option>
             <option value="HIGH" selected>높음 (8 Mbps)</option>
-            <option value="ULTRA">매우 높음 (15 Mbps)</option>
+            <option value="ULTRA">울트라 (15 Mbps)</option>
           </select>
         </div>
-
         <div class="setting-group">
-          <label for="fps">프레임 속도</label>
+          <label for="fps">FPS</label>
           <select id="fps">
             <option value="24">24 FPS</option>
             <option value="30" selected>30 FPS</option>
             <option value="60">60 FPS</option>
           </select>
         </div>
-
         <div class="setting-group">
-          <label for="format">출력 형식</label>
+          <label for="format">포맷</label>
           <select id="format">
             <option value="WEBM" selected>WebM</option>
             <option value="MP4">MP4</option>
           </select>
         </div>
-
         <div class="setting-group checkbox-group">
           <label>
             <input type="checkbox" id="includeAudio" checked>
             <span>오디오 포함</span>
           </label>
         </div>
-
+        <div class="setting-group checkbox-group">
+          <label>
+            <input type="checkbox" id="showCursor" checked>
+            <span>커서 표시</span>
+          </label>
+        </div>
         <div class="setting-group checkbox-group">
           <label>
             <input type="checkbox" id="laserPointer">
-            <span>레이저 포인터 활성화</span>
+            <span>레이저 포인터</span>
           </label>
         </div>
-
         <div class="setting-group checkbox-group">
           <label>
-            <input type="checkbox" id="clickZoom" checked>
-            <span>클릭 줌 효과</span>
+            <input type="checkbox" id="zoomHighlight">
+            <span>영역 줌 하이라이트</span>
           </label>
         </div>
-
+        <div class="setting-group">
+          <label for="zoomDuration">줌 유지 시간</label>
+          <select id="zoomDuration">
+            <option value="3" selected>3초</option>
+            <option value="5">5초</option>
+            <option value="10">10초</option>
+          </select>
+        </div>
+        <div class="setting-group">
+          <label for="zoomScale">줌 배율</label>
+          <select id="zoomScale">
+            <option value="1.2" selected>1.2배</option>
+            <option value="1.5">1.5배</option>
+            <option value="2.0">2배</option>
+          </select>
+        </div>
         <div class="setting-group checkbox-group">
           <label>
             <input type="checkbox" id="showDock" checked>
-            <span>녹화 중 도크 표시</span>
+            <span>화면에 Dock 표시</span>
           </label>
         </div>
       </section>
-
       <section class="actions">
         <button id="startBtn" class="btn btn-primary">
-          <span class="btn-icon">⏹️</span>
+          <span class="btn-icon"></span>
           <span class="btn-text">녹화 시작</span>
         </button>
         <button id="stopBtn" class="btn btn-danger" style="display: none;">
-          <span class="btn-icon">⏹️</span>
+          <span class="btn-icon"></span>
           <span class="btn-text">녹화 중지</span>
         </button>
       </section>
     </main>
-
     <footer>
       <div class="shortcuts">
-        <div class="shortcut">
-          <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>R</kbd>
-          <span>녹화 시작/중지</span>
-        </div>
-        <div class="shortcut">
-          <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd>
-          <span>일시 중지/재개</span>
-        </div>
-        <div class="shortcut">
-          <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd>
-          <span>레이저 토글</span>
-        </div>
+        <div class="shortcut"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>R</kbd><span> 시작/정지</span></div>
+        <div class="shortcut"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd><span> 일시정지/재개</span></div>
+        <div class="shortcut"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd><span> 레이저 토글</span></div>
       </div>
     </footer>
   </div>
-
   <script type="module" src="popup.js"></script>
 </body>
 </html>

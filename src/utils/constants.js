@@ -7,18 +7,19 @@ export const MESSAGE_TYPES = {
   AREA_SELECTED: 'area-selected',
   RECORDING_STATS: 'recording-stats',
   RECORDING_COMMAND: 'recording-command',
-  MOUSE_MOVE: 'mouse-move',
-  MOUSE_CLICK: 'mouse-click',
-  TOGGLE_LASER: 'toggle-laser',
   SHOW_AREA_SELECTOR: 'show-area-selector',
   HIDE_AREA_SELECTOR: 'hide-area-selector',
   SHOW_DOCK: 'show-dock',
   HIDE_DOCK: 'hide-dock',
   UPDATE_DOCK_STATS: 'update-dock-stats',
-  RECORDING_STATE_CHANGED: 'recording-state-changed',
   CONTENT_SCRIPT_READY: 'content-script-ready',
   OFFSCREEN_READY: 'offscreen-ready',
-  HEALTH_CHECK: 'health-check'
+  TOGGLE_LASER: 'toggle-laser',
+  LASER_MOVED: 'laser-moved',
+  TOGGLE_CURSOR: 'toggle-cursor',
+  TOGGLE_ZOOM_HIGHLIGHT: 'toggle-zoom-highlight',
+  ZOOM_HIGHLIGHT_AREA: 'zoom-highlight-area',
+  UPDATE_PREFS: 'update-prefs'
 };
 
 export const RECORDING_STATES = {
@@ -62,7 +63,11 @@ export const DEFAULT_PREFERENCES = {
   includeAudio: true,
   laserPointerEnabled: false,
   clickZoomEnabled: true,
-  showDock: true
+  showDock: true,
+  showCursor: true,
+  zoomHighlightEnabled: false,
+  zoomHighlightDurationSec: 3,
+  zoomHighlightScale: 1.2
 };
 
 export const CHUNK_SIZE_LIMIT = 10 * 1024 * 1024;

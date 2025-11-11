@@ -1,13 +1,25 @@
 const MESSAGE_TYPES = {
+  START_RECORDING: 'start-recording',
+  STOP_RECORDING: 'stop-recording',
+  PAUSE_RECORDING: 'pause-recording',
+  RESUME_RECORDING: 'resume-recording',
+  CANCEL_RECORDING: 'cancel-recording',
+  AREA_SELECTED: 'area-selected',
+  RECORDING_STATS: 'recording-stats',
+  RECORDING_COMMAND: 'recording-command',
   SHOW_AREA_SELECTOR: 'show-area-selector',
   HIDE_AREA_SELECTOR: 'hide-area-selector',
-  AREA_SELECTED: 'area-selected',
   SHOW_DOCK: 'show-dock',
   HIDE_DOCK: 'hide-dock',
   UPDATE_DOCK_STATS: 'update-dock-stats',
-  RECORDING_COMMAND: 'recording-command',
+  CONTENT_SCRIPT_READY: 'content-script-ready',
+  OFFSCREEN_READY: 'offscreen-ready',
   TOGGLE_LASER: 'toggle-laser',
-  CONTENT_SCRIPT_READY: 'content-script-ready'
+  LASER_MOVED: 'laser-moved',
+  TOGGLE_CURSOR: 'toggle-cursor',
+  TOGGLE_ZOOM_HIGHLIGHT: 'toggle-zoom-highlight',
+  ZOOM_HIGHLIGHT_AREA: 'zoom-highlight-area',
+  UPDATE_PREFS: 'update-prefs'
 };
 
 function safeSend(msg) {
@@ -22,102 +34,114 @@ function safeSend(msg) {
   });
 }
 
-class AreaSelector {
-  constructor(onSelected) {
-    this.onSelected = onSelected;
+class SelectionOverlay {
+  constructor() {
     this.host = document.createElement('div');
-    this.host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483647;';
-    const shadow = this.host.attachShadow({ mode: 'open' });
-
+    this.host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483646;';
+    this.shadow = this.host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
-    style.textContent = `
-      .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.4);cursor:crosshair;}
-      .box{position:absolute;border:3px solid #ff0000;background:rgba(255,0,0,0.1);display:none;}
-      .tip{position:fixed;left:50%;top:20px;transform:translateX(-50%);color:#fff;background:rgba(0,0,0,.6);padding:8px 12px;border-radius:8px;font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
-    `;
-    shadow.appendChild(style);
-
+    style.textContent = '.overlay{position:fixed;inset:0;cursor:crosshair}.mask{position:absolute;inset:0;background:rgba(0,0,0,.35);pointer-events:none}.box{position:absolute;border:3px solid #0078ff;background:rgba(0,120,255,.12);box-shadow:0 0 0 9999px rgba(0,0,0,.35);display:none;pointer-events:none}.tip{position:fixed;left:50%;top:16px;transform:translateX(-50%);color:#fff;background:rgba(0,0,0,.65);padding:8px 12px;border-radius:8px;font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}';
+    this.shadow.appendChild(style);
     this.overlay = document.createElement('div');
     this.overlay.className = 'overlay';
+    this.mask = document.createElement('div');
+    this.mask.className = 'mask';
     this.box = document.createElement('div');
     this.box.className = 'box';
     this.tip = document.createElement('div');
     this.tip.className = 'tip';
-    this.tip.textContent = '드래그하여 영역 선택 (ESC 취소)';
-
+    this.tip.textContent = '드래그하여 영역 지정 (ESC 취소)';
+    this.overlay.appendChild(this.mask);
     this.overlay.appendChild(this.box);
-    shadow.appendChild(this.overlay);
-    shadow.appendChild(this.tip);
-
+    this.shadow.appendChild(this.overlay);
+    this.shadow.appendChild(this.tip);
     this.down = null;
-    this.mouseDown = (e) => {
-      this.down = { x: e.clientX, y: e.clientY };
-      Object.assign(this.box.style, { left: this.down.x + 'px', top: this.down.y + 'px', width: '0px', height: '0px', display: 'block' });
-    };
-    this.mouseMove = (e) => {
-      if (!this.down) return;
-      const x = Math.min(this.down.x, e.clientX);
-      const y = Math.min(this.down.y, e.clientY);
-      const w = Math.abs(e.clientX - this.down.x);
-      const h = Math.abs(e.clientY - this.down.y);
-      Object.assign(this.box.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' });
-    };
-    this.mouseUp = async (e) => {
-      if (!this.down) return;
-      const x = Math.min(this.down.x, e.clientX);
-      const y = Math.min(this.down.y, e.clientY);
-      const w = Math.abs(e.clientX - this.down.x);
-      const h = Math.abs(e.clientY - this.down.y);
-      this.down = null;
-      if (w > 30 && h > 30) {
-        await safeSend({ type: MESSAGE_TYPES.AREA_SELECTED, data: { cropArea: { x, y, width: w, height: h } } });
-        this.hide();
-      } else {
-        this.box.style.display = 'none';
-      }
-    };
-    this.keyDown = (e) => {
-      if (e.key === 'Escape') this.hide();
-    };
+    this.mm = this.mouseMove.bind(this);
+    this.mu = this.mouseUp.bind(this);
+    this.md = this.mouseDown.bind(this);
+    this.kd = this.keyDown.bind(this);
   }
-
+  mouseDown(e) {
+    this.down = { x: e.clientX, y: e.clientY };
+    Object.assign(this.box.style, { left: this.down.x + 'px', top: this.down.y + 'px', width: '0px', height: '0px', display: 'block' });
+  }
+  mouseMove(e) {
+    if (!this.down) return;
+    const x = Math.min(this.down.x, e.clientX);
+    const y = Math.min(this.down.y, e.clientY);
+    const w = Math.abs(e.clientX - this.down.x);
+    const h = Math.abs(e.clientY - this.down.y);
+    Object.assign(this.box.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' });
+  }
+  mouseUp(e) {
+    if (!this.down) return;
+    const x = Math.min(this.down.x, e.clientX);
+    const y = Math.min(this.down.y, e.clientY);
+    const w = Math.abs(e.clientX - this.down.x);
+    const h = Math.abs(e.clientY - this.down.y);
+    this.down = null;
+    if (w > 30 && h > 30) {
+      const cropArea = { x, y, width: w, height: h };
+      safeSend({ type: MESSAGE_TYPES.AREA_SELECTED, data: { cropArea } });
+      this.hide();
+    } else {
+      this.box.style.display = 'none';
+    }
+  }
+  keyDown(e) { if (e.key === 'Escape') this.hide(); }
   show() {
     if (!document.body) return setTimeout(() => this.show(), 50);
     document.body.appendChild(this.host);
-    this.overlay.addEventListener('mousedown', this.mouseDown);
-    window.addEventListener('mousemove', this.mouseMove);
-    window.addEventListener('mouseup', this.mouseUp);
-    window.addEventListener('keydown', this.keyDown);
+    this.overlay.addEventListener('mousedown', this.md);
+    window.addEventListener('mousemove', this.mm);
+    window.addEventListener('mouseup', this.mu);
+    window.addEventListener('keydown', this.kd);
   }
-
   hide() {
-    this.overlay.removeEventListener('mousedown', this.mouseDown);
-    window.removeEventListener('mousemove', this.mouseMove);
-    window.removeEventListener('mouseup', this.mouseUp);
-    window.removeEventListener('keydown', this.keyDown);
+    this.overlay.removeEventListener('mousedown', this.md);
+    window.removeEventListener('mousemove', this.mm);
+    window.removeEventListener('mouseup', this.mu);
+    window.removeEventListener('keydown', this.kd);
     if (this.host.parentNode) this.host.parentNode.removeChild(this.host);
   }
+}
+
+class RecordingOverlay {
+  constructor() {
+    this.host = document.createElement('div');
+    this.host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483645; pointer-events:none;';
+    const shadow = this.host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = '.box{position:fixed;pointer-events:none;border:3px solid #ff1a1a;box-shadow:0 0 0 2px rgba(255,26,26,.25), inset 0 0 0 2px rgba(255,26,26,.25)}.box.blue{border-color:#0078ff;box-shadow:0 0 0 2px rgba(0,120,255,.25), inset 0 0 0 2px rgba(0,120,255,.25)}';
+    shadow.appendChild(style);
+    this.box = document.createElement('div');
+    this.box.className = 'box';
+    shadow.appendChild(this.box);
+  }
+  show(crop, isSelecting) {
+    if (!document.body) return;
+    if (!document.body.contains(this.host)) document.body.appendChild(this.host);
+    this.update(crop);
+    if (isSelecting) this.box.classList.add('blue'); else this.box.classList.remove('blue');
+  }
+  update(crop) {
+    this.box.style.left = crop.x + 'px';
+    this.box.style.top = crop.y + 'px';
+    this.box.style.width = crop.width + 'px';
+    this.box.style.height = crop.height + 'px';
+  }
+  hide() { if (this.host.parentNode) this.host.parentNode.removeChild(this.host); }
 }
 
 class Dock {
   constructor() {
     this.host = document.createElement('div');
     this.host.id = 'screen-recorder-dock';
-    this.host.style.cssText = `
-      all: initial; position: fixed; right: 20px; top: 20px; z-index: 2147483646;
-      pointer-events: auto; visibility: visible; display: block;`;
-
+    this.host.style.cssText = 'all: initial; position: fixed; right: 20px; top: 20px; z-index: 2147483646; pointer-events: auto; display: block;';
     const shadow = this.host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
-    style.textContent = `
-      .dock{display:flex;gap:10px;align-items:center;padding:10px 14px;border-radius:12px;
-        background:rgba(0,0,0,0.9);color:#fff;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
-      .btn{background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);color:#fff;
-        padding:6px 10px;border-radius:8px;cursor:pointer;}
-      .stat{font:12px monospace;}
-    `;
+    style.textContent = '.dock{display:flex;gap:8px;align-items:center;padding:10px 14px;border-radius:12px;background:rgba(0,0,0,.9);color:#fff;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.btn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;padding:6px 10px;border-radius:8px;cursor:pointer}.toggle.active{background:rgba(102,126,234,.35);border-color:rgba(102,126,234,.6)}.stat{font:12px monospace}.group{display:flex;gap:6px;align-items:center}';
     shadow.appendChild(style);
-
     this.wrap = document.createElement('div');
     this.wrap.className = 'dock';
     this.timeEl = document.createElement('div');
@@ -132,51 +156,129 @@ class Dock {
     this.stopBtn = document.createElement('button');
     this.stopBtn.className = 'btn';
     this.stopBtn.textContent = 'Stop';
-    this.wrap.append(this.timeEl, this.sizeEl, this.pauseBtn, this.stopBtn);
+    this.laserBtn = document.createElement('button');
+    this.laserBtn.className = 'btn toggle';
+    this.laserBtn.textContent = 'Laser';
+    this.cursorBtn = document.createElement('button');
+    this.cursorBtn.className = 'btn toggle';
+    this.cursorBtn.textContent = 'Cursor';
+    this.zoomBtn = document.createElement('button');
+    this.zoomBtn.className = 'btn toggle';
+    this.zoomBtn.textContent = 'Zoom';
+    const g1 = document.createElement('div'); g1.className = 'group'; g1.append(this.timeEl, this.sizeEl);
+    const g2 = document.createElement('div'); g2.className = 'group'; g2.append(this.pauseBtn, this.stopBtn);
+    const g3 = document.createElement('div'); g3.className = 'group'; g3.append(this.laserBtn, this.cursorBtn, this.zoomBtn);
+    this.wrap.append(g1, g2, g3);
     shadow.appendChild(this.wrap);
-
+    this.isPaused = false;
     this.pauseBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       await safeSend({ type: MESSAGE_TYPES.RECORDING_COMMAND, command: 'pause' });
-      this.pauseBtn.textContent = this.pauseBtn.textContent === 'Pause' ? 'Resume' : 'Pause';
+      this.isPaused = !this.isPaused;
+      this.pauseBtn.textContent = this.isPaused ? 'Resume' : 'Pause';
     });
     this.stopBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       await safeSend({ type: MESSAGE_TYPES.RECORDING_COMMAND, command: 'stop' });
       this.hide();
     });
+    this.laserBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      this.laserBtn.classList.toggle('active');
+      await safeSend({ type: MESSAGE_TYPES.TOGGLE_LASER, target: 'offscreen' });
+    });
+    this.cursorBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      this.cursorBtn.classList.toggle('active');
+      await safeSend({ type: MESSAGE_TYPES.TOGGLE_CURSOR, target: 'offscreen' });
+    });
+    this.zoomBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const active = this.zoomBtn.classList.toggle('active');
+      await safeSend({ type: MESSAGE_TYPES.TOGGLE_ZOOM_HIGHLIGHT, target: 'offscreen' });
+    });
   }
-
   show() {
     if (!document.body) return setTimeout(() => this.show(), 50);
     const exist = document.getElementById('screen-recorder-dock');
     if (exist && exist !== this.host) exist.remove();
     if (!document.body.contains(this.host)) document.body.appendChild(this.host);
     this.host.style.display = 'block';
-    this.host.style.visibility = 'visible';
   }
-
-  hide() {
-    if (this.host.parentNode) this.host.parentNode.removeChild(this.host);
-  }
-
+  hide() { if (this.host.parentNode) this.host.parentNode.removeChild(this.host); }
   updateStats({ duration, size }) {
-    this.timeEl.textContent = this.formatTime(duration || 0);
-    this.sizeEl.textContent = this.formatSize(size || 0);
-  }
-
-  formatTime(ms) {
-    const s = Math.floor(ms / 1000);
+    const s = Math.floor((duration || 0) / 1000);
     const m = Math.floor(s / 60);
     const sec = s % 60;
-    return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    this.timeEl.textContent = `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+    const bytes = size || 0;
+    if (!bytes) this.sizeEl.textContent = '0 B';
+    else { const k = 1024; const sizes = ['B','KB','MB','GB']; const i = Math.floor(Math.log(bytes)/Math.log(k)); this.sizeEl.textContent = `${(bytes/Math.pow(k,i)).toFixed(2)} ${sizes[i]}`; }
   }
+}
 
-  formatSize(bytes) {
-    if (!bytes) return '0 B';
-    const k = 1024; const sizes = ['B','KB','MB','GB'];
-    const i = Math.floor(Math.log(bytes)/Math.log(k));
-    return `${(bytes/Math.pow(k,i)).toFixed(2)} ${sizes[i]}`;
+class ZoomHighlighter {
+  constructor(getCrop) {
+    this.getCrop = getCrop;
+    this.enabled = false;
+    this.dragging = false;
+    this.start = null;
+    this.host = document.createElement('div');
+    this.host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483644; pointer-events:none;';
+    const sh = this.host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = '.rect{position:fixed;border:2px dashed rgba(255,255,255,.8);background:rgba(255,255,255,.08);display:none;pointer-events:none}';
+    sh.appendChild(style);
+    this.rect = document.createElement('div');
+    this.rect.className = 'rect';
+    sh.appendChild(this.rect);
+    this.md = this.mousedown.bind(this);
+    this.mm = this.mousemove.bind(this);
+    this.mu = this.mouseup.bind(this);
+  }
+  enable() {
+    if (this.enabled) return; this.enabled = true;
+    if (!document.body.contains(this.host)) document.body.appendChild(this.host);
+    window.addEventListener('mousedown', this.md, true);
+    window.addEventListener('mousemove', this.mm, true);
+    window.addEventListener('mouseup', this.mu, true);
+  }
+  disable() {
+    this.enabled = false;
+    window.removeEventListener('mousedown', this.md, true);
+    window.removeEventListener('mousemove', this.mm, true);
+    window.removeEventListener('mouseup', this.mu, true);
+    if (this.host.parentNode) this.host.parentNode.removeChild(this.host);
+    this.rect.style.display = 'none';
+    this.dragging = false;
+  }
+  mousedown(e) {
+    const crop = this.getCrop(); if (!crop) return;
+    if (e.clientX < crop.x || e.clientX > crop.x + crop.width || e.clientY < crop.y || e.clientY > crop.y + crop.height) return;
+    this.dragging = true;
+    this.start = { x: e.clientX, y: e.clientY };
+    Object.assign(this.rect.style, { display: 'block', left: this.start.x + 'px', top: this.start.y + 'px', width: '0px', height: '0px' });
+    e.stopPropagation(); e.preventDefault();
+  }
+  mousemove(e) {
+    if (!this.dragging) return;
+    const x = Math.min(this.start.x, e.clientX);
+    const y = Math.min(this.start.y, e.clientY);
+    const w = Math.abs(e.clientX - this.start.x);
+    const h = Math.abs(e.clientY - this.start.y);
+    Object.assign(this.rect.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' });
+  }
+  mouseup() {
+    if (!this.dragging) return;
+    this.dragging = false;
+    const left = parseInt(this.rect.style.left || '0', 10);
+    const top = parseInt(this.rect.style.top || '0', 10);
+    const width = parseInt(this.rect.style.width || '0', 10);
+    const height = parseInt(this.rect.style.height || '0', 10);
+    this.rect.style.display = 'none';
+    if (width > 20 && height > 20) {
+      safeSend({ type: MESSAGE_TYPES.ZOOM_HIGHLIGHT_AREA, target: 'offscreen', data: { x: left, y: top, width, height } });
+    }
   }
 }
 
@@ -184,25 +286,25 @@ class ContentMain {
   constructor() {
     this.areaSelector = null;
     this.dock = new Dock();
-
+    this.recordingOverlay = new RecordingOverlay();
+    this.currentCrop = null;
+    this.zoomHL = new ZoomHighlighter(() => this.currentCrop);
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.type === 'ping') { sendResponse({ success: true }); return true; }
       this.route(msg).then(sendResponse);
       return true;
     });
-
-    // 스크립트 준비 알림
+    document.addEventListener('mousemove', (e) => {
+      if (!this.currentCrop) return;
+      if (e.clientX < this.currentCrop.x || e.clientX > this.currentCrop.x + this.currentCrop.width || e.clientY < this.currentCrop.y || e.clientY > this.currentCrop.y + this.currentCrop.height) return;
+      safeSend({ type: MESSAGE_TYPES.LASER_MOVED, target: 'offscreen', data: { x: e.clientX - this.currentCrop.x, y: e.clientY - this.currentCrop.y } });
+    }, true);
     safeSend({ type: MESSAGE_TYPES.CONTENT_SCRIPT_READY });
   }
-
   async route(msg) {
     switch (msg.type) {
       case MESSAGE_TYPES.SHOW_AREA_SELECTOR:
-        if (!this.areaSelector) {
-          this.areaSelector = new AreaSelector(async (crop) => {
-            await safeSend({ type: MESSAGE_TYPES.AREA_SELECTED, data: { cropArea: crop } });
-          });
-        }
+        if (!this.areaSelector) this.areaSelector = new SelectionOverlay();
         this.areaSelector.show();
         return { success: true };
       case MESSAGE_TYPES.HIDE_AREA_SELECTOR:
@@ -210,12 +312,25 @@ class ContentMain {
         return { success: true };
       case MESSAGE_TYPES.SHOW_DOCK:
         this.dock.show();
+        if (this.currentCrop) this.recordingOverlay.show(this.currentCrop, false);
         return { success: true };
       case MESSAGE_TYPES.HIDE_DOCK:
         this.dock.hide();
+        this.recordingOverlay.hide();
         return { success: true };
       case MESSAGE_TYPES.UPDATE_DOCK_STATS:
         this.dock.updateStats(msg.data || {});
+        return { success: true };
+      case 'set-recording-crop':
+        this.currentCrop = msg.data;
+        this.recordingOverlay.show(this.currentCrop, false);
+        return { success: true };
+      case 'set-selecting-crop':
+        this.currentCrop = msg.data;
+        this.recordingOverlay.show(this.currentCrop, true);
+        return { success: true };
+      case 'zoom-highlight-toggle':
+        if (msg.data?.enabled) this.zoomHL.enable(); else this.zoomHL.disable();
         return { success: true };
       default:
         return { success: false };
@@ -224,4 +339,3 @@ class ContentMain {
 }
 
 new ContentMain();
-console.log('[Content] Loaded');

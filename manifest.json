@@ -1,16 +1,14 @@
 {
   "name": "Advanced Screen Recorder",
   "description": "Professional screen recording with area selection and laser pointer",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "manifest_version": 3,
   "minimum_chrome_version": "116",
-
   "icons": {
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-
   "action": {
     "default_icon": {
       "16": "icons/icon-16.png",
@@ -20,12 +18,10 @@
     "default_popup": "src/popup/popup.html",
     "default_title": "Advanced Screen Recorder"
   },
-
   "background": {
     "service_worker": "src/background/service-worker.js",
     "type": "module"
   },
-
   "permissions": [
     "tabCapture",
     "offscreen",
@@ -34,11 +30,16 @@
     "activeTab",
     "scripting"
   ],
-
   "host_permissions": [
     "<all_urls>"
   ],
-
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "commands": {
     "toggle-recording": {
       "suggested_key": {
@@ -62,16 +63,12 @@
       "description": "Toggle laser pointer"
     }
   },
-
   "web_accessible_resources": [
     {
-      "resources": [
-        "src/offscreen/offscreen.html"
-      ],
+      "resources": ["src/offscreen/offscreen.html"],
       "matches": ["<all_urls>"]
     }
   ],
-
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   }
