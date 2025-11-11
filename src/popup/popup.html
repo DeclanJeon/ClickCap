@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Screen Recorder</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+          <circle cx="16" cy="16" r="14" fill="#ff0000" opacity="0.2"/>
+          <circle cx="16" cy="16" r="8" fill="#ff0000"/>
+        </svg>
+        <h1>Screen Recorder</h1>
+      </div>
+      <div class="status" id="status">
+        <span class="status-dot"></span>
+        <span class="status-text">Ready</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="recording-mode">
+        <h2>Recording Mode</h2>
+        <div class="mode-options">
+          <label class="mode-option">
+            <input type="radio" name="mode" value="full-screen" checked>
+            <div class="mode-card">
+              <div class="mode-icon">🖥️</div>
+              <div class="mode-label">Full Screen</div>
+              <div class="mode-description">Record entire browser tab</div>
+            </div>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="mode" value="area">
+            <div class="mode-card">
+              <div class="mode-icon">✂️</div>
+              <div class="mode-label">Select Area</div>
+              <div class="mode-description">Choose specific region</div>
+            </div>
+          </label>
+        </div>
+      </section>
+
+      <section class="settings">
+        <h2>Settings</h2>
+        
+        <div class="setting-group">
+          <label for="quality">Video Quality</label>
+          <select id="quality">
+            <option value="LOW">Low (2 Mbps)</option>
+            <option value="MEDIUM">Medium (5 Mbps)</option>
+            <option value="HIGH" selected>High (8 Mbps)</option>
+            <option value="ULTRA">Ultra (15 Mbps)</option>
+          </select>
+        </div>
+
+        <div class="setting-group">
+          <label for="fps">Frame Rate</label>
+          <select id="fps">
+            <option value="24">24 FPS</option>
+            <option value="30" selected>30 FPS</option>
+            <option value="60">60 FPS</option>
+          </select>
+        </div>
+
+        <div class="setting-group">
+          <label for="format">Output Format</label>
+          <select id="format">
+            <option value="WEBM" selected>WebM</option>
+            <option value="MP4">MP4</option>
+            <option value="GIF">GIF</option>
+          </select>
+        </div>
+
+        <div class="setting-group checkbox-group">
+          <label>
+            <input type="checkbox" id="includeAudio" checked>
+            <span>Include Audio</span>
+          </label>
+        </div>
+
+        <div class="setting-group checkbox-group">
+          <label>
+            <input type="checkbox" id="laserPointer">
+            <span>Enable Laser Pointer</span>
+          </label>
+        </div>
+
+        <div class="setting-group checkbox-group">
+          <label>
+            <input type="checkbox" id="clickZoom" checked>
+            <span>Click Zoom Effect</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="actions">
+        <button id="startBtn" class="btn btn-primary">
+          <span class="btn-icon">⏺</span>
+          <span class="btn-text">Start Recording</span>
+        </button>
+        <button id="stopBtn" class="btn btn-danger" style="display: none;">
+          <span class="btn-icon">⏹</span>
+          <span class="btn-text">Stop Recording</span>
+        </button>
+      </section>
+
+      <section class="recordings" id="recordingsSection" style="display: none;">
+        <h2>Recent Recordings</h2>
+        <div id="recordingsList" class="recordings-list"></div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="shortcuts">
+        <div class="shortcut">
+          <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>R</kbd>
+          <span>Toggle Recording</span>
+        </div>
+        <div class="shortcut">
+          <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd>
+          <span>Pause/Resume</span>
+        </div>
+        <div class="shortcut">
+          <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd>
+          <span>Toggle Laser</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
