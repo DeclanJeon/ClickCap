@@ -158,6 +158,7 @@ class RecordingOverlay {
         position: fixed;
         pointer-events: none;
         border: 3px solid #ff1a1a;
+        box-sizing: content-box;  /* ✅ border를 바깥쪽에 그림 */
         box-shadow:
           0 0 0 2px rgba(255, 26, 26, 0.25),
           inset 0 0 0 2px rgba(255, 26, 26, 0.25),
@@ -257,10 +258,16 @@ class RecordingOverlay {
   }
 
   update(crop) {
-    this.box.style.left = crop.x + 'px';
-    this.box.style.top = crop.y + 'px';
-    this.box.style.width = crop.width + 'px';
-    this.box.style.height = crop.height + 'px';
+    // ✅ 테두리를 실제 녹화 영역 바깥쪽에 표시
+    const BORDER_WIDTH = 3;
+    const SAFETY_MARGIN = 5;
+    const TOTAL_OFFSET = BORDER_WIDTH + SAFETY_MARGIN;
+
+    // 테두리를 크롭 영역보다 바깥쪽으로 이동
+    this.box.style.left = (crop.x - TOTAL_OFFSET) + 'px';
+    this.box.style.top = (crop.y - TOTAL_OFFSET) + 'px';
+    this.box.style.width = (crop.width + TOTAL_OFFSET * 2) + 'px';
+    this.box.style.height = (crop.height + TOTAL_OFFSET * 2) + 'px';
   }
 
   hide() {

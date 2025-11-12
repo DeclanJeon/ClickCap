@@ -170,13 +170,23 @@ export class AreaSelector {
       // ✅ DPR 적용
       const dpr = window.devicePixelRatio || 1;
 
+      // ✅ 테두리 제외를 위한 크롭 영역 조정
+      const BORDER_WIDTH = 3;  // 테두리 두께
+      const SAFETY_MARGIN = 5;  // 추가 여유 공간
+      const TOTAL_OFFSET = BORDER_WIDTH + SAFETY_MARGIN;
+
       const cropArea = {
-        x: Math.round(left),
-        y: Math.round(top),
-        width: Math.round(width),
-        height: Math.round(height),
+        x: Math.round(left + TOTAL_OFFSET),
+        y: Math.round(top + TOTAL_OFFSET),
+        width: Math.round(width - TOTAL_OFFSET * 2),
+        height: Math.round(height - TOTAL_OFFSET * 2),
         dpr: dpr  // ✅ DPR 정보 포함
       };
+
+      console.log('[AreaSelector] User selected area (with border offset):');
+      console.log('  Original:', { x: left, y: top, width, height });
+      console.log('  Adjusted:', cropArea);
+      console.log('  Offset applied:', TOTAL_OFFSET, 'px on all sides');
 
       // ✅ View Context 수집
       const vv = window.visualViewport || null;
