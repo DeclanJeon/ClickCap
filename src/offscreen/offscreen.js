@@ -8,12 +8,12 @@ const REC_MIME = MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? '
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
-function clampCrop(crop, srcW, srcH) {
-  if (!crop) return { x: 0, y: 0, width: srcW, height: srcH };
-  const x = clamp(Math.round(crop.x), 0, srcW - 1);
-  const y = clamp(Math.round(crop.y), 0, srcH - 1);
-  const w = clamp(Math.round(crop.width), 1, srcW - x);
-  const h = clamp(Math.round(crop.height), 1, srcH - y);
+function clampCrop(crop, baseW, baseH) {
+  if (!crop) return { x: 0, y: 0, width: baseW, height: baseH };
+  const x = clamp(Math.round(crop.x), 0, baseW - 1);
+  const y = clamp(Math.round(crop.y), 0, baseH - 1);
+  const w = clamp(Math.round(crop.width), 1, baseW - x);
+  const h = clamp(Math.round(crop.height), 1, baseH - y);
   return { x, y, width: w, height: h };
 }
 
@@ -46,6 +46,10 @@ class OffscreenRecorder {
     this.laser = new LaserPointer();
     this.cursorPos = { x: 0, y: 0 };
     this.zoomAnim = null;
+    this.viewport = { w: 0, h: 0, dpr: 1 };
+    this.scaleX = 1;
+    this.scaleY = 1;
+    this.currentCrop = null;
     this.setupMessageHandlers();
     this.init();
   }
@@ -84,6 +88,7 @@ class OffscreenRecorder {
       case MESSAGE_TYPES.TOGGLE_CURSOR: this.state.showCursor = !this.state.showCursor; return { success: true };
       case MESSAGE_TYPES.TOGGLE_ZOOM_HIGHLIGHT: this.state.zoomHighlightEnabled = !this.state.zoomHighlightEnabled; chrome.runtime.sendMessage({ type: 'zoom-highlight-toggle', data: { enabled: this.state.zoomHighlightEnabled } }); return { success: true };
       case MESSAGE_TYPES.ZOOM_HIGHLIGHT_AREA: if (this.state.zoomHighlightEnabled) this.triggerZoomAnimation(message.data); return { success: true };
+      case MESSAGE_TYPES.VIEWPORT_INFO: this.viewport = { w: message.data.viewportWidth || 0, h: message.data.viewportHeight || 0, dpr: message.data.dpr || 1 }; this.recalcScales(); return { success: true };
       default: return { success: true };
     }
   }
@@ -101,11 +106,35 @@ class OffscreenRecorder {
     this.laser.setEnabled(this.state.laserPointerEnabled);
   }
 
+  recalcScales() {
+    if (!this.video) return;
+    const vW = this.video.videoWidth || 1;
+    const vH = this.video.videoHeight || 1;
+    if (this.viewport.w > 0 && this.viewport.h > 0) {
+      this.scaleX = vW / this.viewport.w;
+      this.scaleY = vH / this.viewport.h;
+    } else {
+      const dpr = self.devicePixelRatio || 1;
+      this.scaleX = dpr;
+      this.scaleY = dpr;
+    }
+    if (this.currentCrop) {
+      this.resizeCanvasToCrop(this.currentCrop);
+    }
+  }
+
+  resizeCanvasToCrop(crop) {
+    const outW = Math.max(1, Math.round(crop.width * this.scaleX));
+    const outH = Math.max(1, Math.round(crop.height * this.scaleY));
+    if (this.canvas.width !== outW || this.canvas.height !== outH) {
+      this.canvas.width = outW;
+      this.canvas.height = outH;
+    }
+  }
+
   async startRecording({ streamId, cropArea, preferences }) {
     try {
       this.updatePrefs(preferences || {});
-      this.state.cropArea = cropArea || null;
-
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: this.state.includeAudio ? { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } } : false,
         video: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } }
@@ -118,30 +147,51 @@ class OffscreenRecorder {
       await this.video.play();
       await this.waitForFirstFrame(this.video);
 
-      const srcW = this.video.videoWidth || 1;
-      const srcH = this.video.videoHeight || 1;
-      const crop = clampCrop(this.state.cropArea, srcW, srcH);
-
       this.canvas = document.getElementById('rec-canvas');
-      const dpr = self.devicePixelRatio || 1;
-      this.canvas.width = Math.max(1, Math.round(crop.width * dpr));
-      this.canvas.height = Math.max(1, Math.round(crop.height * dpr));
-      this.ctx = this.canvas.getContext('2d', { alpha: false, desynchronized: false });
+      this.recalcScales();
 
-      chrome.runtime.sendMessage({ type: 'set-recording-crop' , data: { x: crop.x, y: crop.y, width: crop.width, height: crop.height } });
+      // ✅ Crop 영역 검증 및 정규화
+      const baseW = this.video.videoWidth;
+      const baseH = this.video.videoHeight;
+
+      const crop = clampCrop(cropArea, baseW, baseH);
+
+      console.log('[Offscreen] Video dimensions:', baseW, 'x', baseH);
+      console.log('[Offscreen] Crop area:', crop);
+      console.log('[Offscreen] Scale:', this.scaleX, 'x', this.scaleY);
+
+      this.currentCrop = crop;
+      this.resizeCanvasToCrop(crop);
+
+      // ✅ ContentScript에 정규화된 crop 전송
+      chrome.runtime.sendMessage({
+        type: 'set-recording-crop',
+        data: {
+          x: crop.x,
+          y: crop.y,
+          width: crop.width,
+          height: crop.height
+        }
+      });
 
       const fps = clamp(this.state.fps, 10, 60);
       const intervalMs = Math.max(15, Math.floor(1000 / fps));
-
-      const options = { mimeType: REC_MIME, videoBitsPerSecond: this.qualityToBitrate(this.state.quality), audioBitsPerSecond: 128000 };
       const outStream = this.canvas.captureStream(fps);
+
       const aTrack = this.mediaStream.getAudioTracks()[0];
       if (aTrack) { try { outStream.addTrack(aTrack); } catch {} }
+
+      const options = {
+        mimeType: REC_MIME,
+        videoBitsPerSecond: this.qualityToBitrate(this.state.quality),
+        audioBitsPerSecond: 128000
+      };
 
       this.recorder = new MediaRecorder(outStream, options);
       this.chunks = [];
       this.totalSize = 0;
       this.currentRecordingId = `recording_${Date.now()}`;
+
       this.recorder.ondataavailable = async (e) => {
         if (e.data && e.data.size > 0) {
           this.chunks.push(e.data);
@@ -149,21 +199,24 @@ class OffscreenRecorder {
           try { await storageManager.saveChunk(this.currentRecordingId, e.data, this.chunks.length - 1); } catch {}
         }
       };
+
       this.recorder.onstop = async () => {
         this.stopStats();
         await this.finalize();
       };
-      this.recorder.start(1000);
 
+      this.recorder.start(1000);
       this.startedAt = Date.now();
       this.accumulatedPause = 0;
       this.pausedAt = 0;
-
       this.startStats();
+
       if (this.timer) clearInterval(this.timer);
-      this.timer = setInterval(() => this.renderFrame(crop, dpr), intervalMs);
+      this.timer = setInterval(() => this.renderFrame(), intervalMs);
+
       return { success: true };
     } catch (e) {
+      console.error('[Offscreen] startCapture error:', e);
       await this.cleanup();
       return { success: false, error: e.message };
     }
@@ -187,19 +240,52 @@ class OffscreenRecorder {
     }
   }
 
-  renderFrame(crop, dpr) {
+  renderFrame() {
     try {
-      if (!this.video || !this.ctx) return;
-      const sX = Math.round(crop.x * dpr);
-      const sY = Math.round(crop.y * dpr);
-      const sW = Math.round(crop.width * dpr);
-      const sH = Math.round(crop.height * dpr);
-      this.ctx.drawImage(this.video, sX, sY, sW, sH, 0, 0, this.canvas.width, this.canvas.height);
+      if (!this.video || !this.ctx || !this.canvas || !this.currentCrop) {
+        if (!this.ctx && this.canvas) {
+          this.ctx = this.canvas.getContext('2d', { alpha: false, desynchronized: false });
+        }
+        if (!this.ctx) return;
+      }
 
-      if (this.zoomAnim) this.drawZoom(crop);
+      const crop = this.currentCrop;
+
+      // ✅ 비디오 소스 좌표 (physical pixels)
+      const sX = Math.round(crop.x);
+      const sY = Math.round(crop.y);
+      const sW = Math.round(crop.width);
+      const sH = Math.round(crop.height);
+
+      // ✅ Canvas 목표 좌표 (항상 0,0부터 시작)
+      const dX = 0;
+      const dY = 0;
+      const dW = this.canvas.width;
+      const dH = this.canvas.height;
+
+      // ✅ 명확한 로깅
+      if (this.frameCount === 0) {
+        console.log('[renderFrame] First frame:');
+        console.log('  Video source:', { sX, sY, sW, sH });
+        console.log('  Canvas dest:', { dX, dY, dW, dH });
+        console.log('  Canvas size:', this.canvas.width, 'x', this.canvas.height);
+      }
+      this.frameCount = (this.frameCount || 0) + 1;
+
+      // ✅ drawImage 호출
+      this.ctx.drawImage(
+        this.video,
+        sX, sY, sW, sH,  // 비디오에서 추출할 영역
+        dX, dY, dW, dH   // Canvas에 그릴 영역
+      );
+
+      // ✅ 나머지 렌더링
+      if (this.zoomAnim) this.drawZoom();
       if (this.state.showCursor) this.drawCursor();
       if (this.state.laserPointerEnabled) this.laser.draw(this.ctx);
-    } catch {}
+    } catch (e) {
+      console.error('[renderFrame] Error:', e);
+    }
   }
 
   drawCursor() {
@@ -226,29 +312,27 @@ class OffscreenRecorder {
     setTimeout(() => { if (this.zoomAnim && Date.now() - this.zoomAnim.start >= dur) this.zoomAnim = null; }, dur + 50);
   }
 
-  drawZoom(crop) {
-    if (!this.zoomAnim) return;
+  drawZoom() {
+    if (!this.zoomAnim || !this.currentCrop) return;
+    const crop = this.currentCrop;
     const { area, scale, start, dur } = this.zoomAnim;
     const t = Date.now() - start;
     if (t > dur) { this.zoomAnim = null; return; }
-    const progress = Math.min(1, t / dur);
-    const ease = 1;
     const sx = clamp(area.x - crop.x, 0, crop.width);
     const sy = clamp(area.y - crop.y, 0, crop.height);
     const sw = clamp(area.width, 1, crop.width - sx);
     const sh = clamp(area.height, 1, crop.height - sy);
     const cx = sx + sw / 2;
     const cy = sy + sh / 2;
-    const curScale = scale;
-    const dw = sw * curScale;
-    const dh = sh * curScale;
+    const dw = sw * scale;
+    const dh = sh * scale;
     const dx = clamp(cx - dw / 2, 0, crop.width - dw);
     const dy = clamp(cy - dh / 2, 0, crop.height - dh);
     this.ctx.save();
     this.ctx.beginPath();
     this.ctx.rect(dx, dy, dw, dh);
     this.ctx.clip();
-    this.ctx.drawImage(this.canvas, sx, sy, sw, sh, dx, dy, dw, dh);
+    this.ctx.drawImage(this.canvas, Math.round(sx * this.scaleX), Math.round(sy * this.scaleY), Math.round(sw * this.scaleX), Math.round(sh * this.scaleY), dx, dy, dw, dh);
     this.ctx.restore();
     this.ctx.save();
     this.ctx.strokeStyle = 'rgba(255,255,0,0.8)';

@@ -19,7 +19,8 @@ export const MESSAGE_TYPES = {
   TOGGLE_CURSOR: 'toggle-cursor',
   TOGGLE_ZOOM_HIGHLIGHT: 'toggle-zoom-highlight',
   ZOOM_HIGHLIGHT_AREA: 'zoom-highlight-area',
-  UPDATE_PREFS: 'update-prefs'
+  UPDATE_PREFS: 'update-prefs',
+  VIEWPORT_INFO: 'viewport-info'
 };
 
 export const RECORDING_STATES = {

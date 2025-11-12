@@ -47,14 +47,12 @@ class ServiceWorkerMain {
   setup() {
     chrome.runtime.onInstalled.addListener(() => this.init());
     chrome.runtime.onStartup.addListener(() => this.init());
-
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       this.handle(message, sender).then(sendResponse).catch((e) => {
         sendResponse({ success: false, error: e.message });
       });
       return true;
     });
-
     chrome.commands.onCommand.addListener(async (command) => {
       if (command === 'toggle-recording') {
         if (this.state.isRecording) {
@@ -80,25 +78,18 @@ class ServiceWorkerMain {
     switch (message.type) {
       case MESSAGE_TYPES.CONTENT_SCRIPT_READY:
         return { success: true };
-
       case MESSAGE_TYPES.START_RECORDING:
         return this.startCmd(message.data);
-
       case MESSAGE_TYPES.AREA_SELECTED:
         return this.areaSelected(message.data);
-
       case MESSAGE_TYPES.OFFSCREEN_READY:
         return { success: true };
-
       case MESSAGE_TYPES.RECORDING_STATS:
         return this.forwardStats(message.data);
-
       case MESSAGE_TYPES.STOP_RECORDING:
         return this.stopCmd();
-
       case MESSAGE_TYPES.RECORDING_COMMAND:
         return this.recordingCommand(message.command);
-
       case MESSAGE_TYPES.UPDATE_PREFS:
         this.state.preferences = { ...this.state.preferences, ...(message.data || {}) };
         await storageManager.saveChromeStorage(STORAGE_KEYS.USER_PREFERENCES, this.state.preferences);
@@ -106,19 +97,38 @@ class ServiceWorkerMain {
           await SafeChrome.sendMessage({ type: MESSAGE_TYPES.UPDATE_PREFS, target: 'offscreen', data: this.state.preferences });
         }
         return { success: true };
-
       default:
         return { success: true };
     }
   }
 
   async ensureContentScript(tabId) {
-    const ping = await SafeChrome.sendTabMessage(tabId, { type: 'ping' });
-    if (ping?.success) return true;
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content/content-script.js'] });
-    await new Promise((r) => setTimeout(r, 200));
-    const ping2 = await SafeChrome.sendTabMessage(tabId, { type: 'ping' });
-    return ping2?.success;
+    const tryPing = async () => {
+      return await new Promise((resolve) => {
+        try {
+          chrome.tabs.sendMessage(tabId, { type: 'ping' }, (res) => {
+            resolve(res && res.success === true);
+          });
+        } catch {
+          resolve(false);
+        }
+      });
+    };
+    for (let i = 0; i < 5; i++) {
+      const ok = await tryPing();
+      if (ok) return true;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content/content-script.js'] });
+      await new Promise((r) => setTimeout(r, 200));
+    } catch {}
+    for (let i = 0; i < 5; i++) {
+      const ok = await tryPing();
+      if (ok) return true;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return false;
   }
 
   async ensureOffscreen() {
@@ -139,6 +149,7 @@ class ServiceWorkerMain {
     if (String(tab.url).startsWith('chrome://') || String(tab.url).startsWith('chrome-extension://')) {
       return { success: false, error: 'Cannot record chrome:// or extension pages' };
     }
+
     this.state.currentTabId = tab.id;
     this.state.preferences = { ...this.state.preferences, ...(preferences || {}) };
     await storageManager.saveChromeStorage(STORAGE_KEYS.USER_PREFERENCES, this.state.preferences);
@@ -149,19 +160,83 @@ class ServiceWorkerMain {
     if (mode === 'area') {
       await SafeChrome.sendTabMessage(tab.id, { type: MESSAGE_TYPES.SHOW_AREA_SELECTOR });
     } else {
-      await this.startCapture(null, this.state.preferences);
-      if (this.state.preferences.showDock) await this.showDockWithRetry();
+      // ✅ Full-screen 모드에서도 전체 화면 표시
+      const prefs = (await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES))
+        || this.state.preferences;
+
+      // 뷰포트 정보 가져오기 (ContentScript에서 먼저 보냄)
+      await new Promise(r => setTimeout(r, 100));
+
+      // 전체 화면을 cropArea로 설정
+      await SafeChrome.sendTabMessage(tab.id, {
+        type: 'set-recording-crop',
+        data: {
+          x: 0,
+          y: 0,
+          width: window.innerWidth || 1920,
+          height: window.innerHeight || 1080,
+          isSelecting: false
+        }
+      });
+
+      await this.startCapture(null, prefs);
+      if (prefs.showDock) await this.showDockWithRetry();
     }
+
     return { success: true };
   }
 
   async areaSelected({ cropArea }) {
-    this.state.cropArea = cropArea;
-    await SafeChrome.sendTabMessage(this.state.currentTabId, { type: MESSAGE_TYPES.HIDE_AREA_SELECTOR });
-    const prefs = (await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES)) || this.state.preferences;
-    await this.startCapture(cropArea, prefs);
+    // ✅ Crop 정규화: logical pixels → physical pixels
+    const dpr = cropArea.dpr || 1;
+    const normalizedCropArea = {
+      x: Math.round(cropArea.x * dpr),
+      y: Math.round(cropArea.y * dpr),
+      width: Math.round(cropArea.width * dpr),
+      height: Math.round(cropArea.height * dpr)
+    };
+
+    this.state.cropArea = normalizedCropArea;
+
+    await SafeChrome.sendTabMessage(this.state.currentTabId, {
+      type: MESSAGE_TYPES.HIDE_AREA_SELECTOR
+    });
+
+    // ✅ ContentScript에는 원본 크롭 전송 (UI 표시용)
+    await SafeChrome.sendTabMessage(this.state.currentTabId, {
+      type: 'set-recording-crop',
+      data: {
+        x: cropArea.x,
+        y: cropArea.y,
+        width: cropArea.width,
+        height: cropArea.height,
+        isSelecting: true
+      }
+    });
+
+    const prefs = (await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES))
+      || this.state.preferences;
+
+    // ✅ Offscreen에는 정규화된 크롭 전송 (녹화용)
+    await this.startCapture(normalizedCropArea, prefs);
+
     if (prefs.showDock) await this.showDockWithRetry();
-    await SafeChrome.sendTabMessage(this.state.currentTabId, { type: MESSAGE_TYPES.SHOW_DOCK });
+
+    await SafeChrome.sendTabMessage(this.state.currentTabId, {
+      type: 'set-recording-crop',
+      data: {
+        x: cropArea.x,
+        y: cropArea.y,
+        width: cropArea.width,
+        height: cropArea.height,
+        isSelecting: false
+      }
+    });
+
+    await SafeChrome.sendTabMessage(this.state.currentTabId, {
+      type: MESSAGE_TYPES.SHOW_DOCK
+    });
+
     return { success: true };
   }
 
@@ -178,7 +253,6 @@ class ServiceWorkerMain {
     await this.ensureOffscreen();
     await new Promise((r) => setTimeout(r, 100));
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: this.state.currentTabId });
-
     const res = await SafeChrome.sendMessage({
       type: MESSAGE_TYPES.START_RECORDING,
       target: 'offscreen',

@@ -167,20 +167,24 @@ export class AreaSelector {
     const height = Math.abs(this.currentY - this.startY);
 
     if (width > 50 && height > 50) {
+      // ✅ DPR 적용
+      const dpr = window.devicePixelRatio || 1;
+
       const cropArea = {
         x: Math.round(left),
         y: Math.round(top),
         width: Math.round(width),
-        height: Math.round(height)
+        height: Math.round(height),
+        dpr: dpr  // ✅ DPR 정보 포함
       };
 
       this.onAreaSelected(cropArea);
-      
+
       this.overlay.style.background = 'transparent';
       this.overlay.style.pointerEvents = 'none';
       this.instructions.style.display = 'none';
       this.coordinates.style.display = 'none';
-      
+
       this.selectionBox.style.boxShadow = 'none';
     } else {
       this.selectionBox.style.display = 'none';

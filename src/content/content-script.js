@@ -19,7 +19,8 @@ const MESSAGE_TYPES = {
   TOGGLE_CURSOR: 'toggle-cursor',
   TOGGLE_ZOOM_HIGHLIGHT: 'toggle-zoom-highlight',
   ZOOM_HIGHLIGHT_AREA: 'zoom-highlight-area',
-  UPDATE_PREFS: 'update-prefs'
+  UPDATE_PREFS: 'update-prefs',
+  VIEWPORT_INFO: 'viewport-info'
 };
 
 function safeSend(msg) {
@@ -83,6 +84,7 @@ class SelectionOverlay {
     if (w > 30 && h > 30) {
       const cropArea = { x, y, width: w, height: h };
       safeSend({ type: MESSAGE_TYPES.AREA_SELECTED, data: { cropArea } });
+      this.sendViewportInfo();
       this.hide();
     } else {
       this.box.style.display = 'none';
@@ -104,6 +106,13 @@ class SelectionOverlay {
     window.removeEventListener('keydown', this.kd);
     if (this.host.parentNode) this.host.parentNode.removeChild(this.host);
   }
+  sendViewportInfo() {
+    safeSend({ type: MESSAGE_TYPES.VIEWPORT_INFO, target: 'offscreen', data: {
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      dpr: window.devicePixelRatio || 1
+    }});
+  }
 }
 
 class RecordingOverlay {
@@ -112,25 +121,121 @@ class RecordingOverlay {
     this.host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483645; pointer-events:none;';
     const shadow = this.host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
-    style.textContent = '.box{position:fixed;pointer-events:none;border:3px solid #ff1a1a;box-shadow:0 0 0 2px rgba(255,26,26,.25), inset 0 0 0 2px rgba(255,26,26,.25)}.box.blue{border-color:#0078ff;box-shadow:0 0 0 2px rgba(0,120,255,.25), inset 0 0 0 2px rgba(0,120,255,.25)}';
+
+    // ✅ 개선된 스타일
+    style.textContent = `
+      .box {
+        position: fixed;
+        pointer-events: none;
+        border: 3px solid #ff1a1a;
+        box-shadow:
+          0 0 0 2px rgba(255, 26, 26, 0.25),
+          inset 0 0 0 2px rgba(255, 26, 26, 0.25),
+          0 0 15px rgba(255, 26, 26, 0.6);
+        transition: box-shadow 0.2s ease;
+      }
+
+      .box.recording {
+        animation: recordingPulse 1.5s ease-in-out infinite;
+      }
+
+      @keyframes recordingPulse {
+        0%, 100% {
+          box-shadow:
+            0 0 0 2px rgba(255, 26, 26, 0.25),
+            inset 0 0 0 2px rgba(255, 26, 26, 0.25),
+            0 0 15px rgba(255, 26, 26, 0.6);
+        }
+        50% {
+          box-shadow:
+            0 0 0 2px rgba(255, 26, 26, 0.4),
+            inset 0 0 0 2px rgba(255, 26, 26, 0.4),
+            0 0 25px rgba(255, 26, 26, 0.9);
+        }
+      }
+
+      .box.blue {
+        border-color: #0078ff;
+        box-shadow:
+          0 0 0 2px rgba(0, 120, 255, 0.25),
+          inset 0 0 0 2px rgba(0, 120, 255, 0.25),
+          0 0 15px rgba(0, 120, 255, 0.6);
+      }
+
+      .indicator {
+        position: fixed;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(255, 26, 26, 0.95);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        z-index: 2147483647;
+        pointer-events: none;
+        display: none;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        box-shadow: 0 4px 12px rgba(255, 26, 26, 0.4);
+      }
+
+      .indicator.visible {
+        display: block;
+      }
+
+      .indicator::before {
+        content: '● ';
+        animation: blink 1s ease-in-out infinite;
+      }
+
+      @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+      }
+    `;
+
     shadow.appendChild(style);
+    this.overlay = document.createElement('div');
+    this.overlay.className = 'overlay';
     this.box = document.createElement('div');
     this.box.className = 'box';
-    shadow.appendChild(this.box);
+    this.indicator = document.createElement('div');
+    this.indicator.className = 'indicator';
+    this.indicator.textContent = 'Recording Area';
+
+    this.overlay.appendChild(this.box);
+    shadow.appendChild(this.overlay);
+    shadow.appendChild(this.indicator);
   }
+
   show(crop, isSelecting) {
     if (!document.body) return;
     if (!document.body.contains(this.host)) document.body.appendChild(this.host);
     this.update(crop);
-    if (isSelecting) this.box.classList.add('blue'); else this.box.classList.remove('blue');
+
+    // ✅ 상태에 따라 클래스 변경
+    if (isSelecting) {
+      this.box.classList.add('blue');
+      this.box.classList.remove('recording');
+      this.indicator.classList.remove('visible');
+    } else {
+      this.box.classList.remove('blue');
+      this.box.classList.add('recording');
+      this.indicator.classList.add('visible');
+    }
   }
+
   update(crop) {
     this.box.style.left = crop.x + 'px';
     this.box.style.top = crop.y + 'px';
     this.box.style.width = crop.width + 'px';
     this.box.style.height = crop.height + 'px';
   }
-  hide() { if (this.host.parentNode) this.host.parentNode.removeChild(this.host); }
+
+  hide() {
+    if (this.host.parentNode) this.host.parentNode.removeChild(this.host);
+  }
 }
 
 class Dock {
@@ -194,7 +299,7 @@ class Dock {
     });
     this.zoomBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const active = this.zoomBtn.classList.toggle('active');
+      this.zoomBtn.classList.toggle('active');
       await safeSend({ type: MESSAGE_TYPES.TOGGLE_ZOOM_HIGHLIGHT, target: 'offscreen' });
     });
   }
@@ -208,7 +313,7 @@ class Dock {
   hide() { if (this.host.parentNode) this.host.parentNode.removeChild(this.host); }
   updateStats({ duration, size }) {
     const s = Math.floor((duration || 0) / 1000);
-    const m = Math.floor(s / 60);
+       const m = Math.floor(s / 60);
     const sec = s % 60;
     this.timeEl.textContent = `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
     const bytes = size || 0;
@@ -299,6 +404,10 @@ class ContentMain {
       if (e.clientX < this.currentCrop.x || e.clientX > this.currentCrop.x + this.currentCrop.width || e.clientY < this.currentCrop.y || e.clientY > this.currentCrop.y + this.currentCrop.height) return;
       safeSend({ type: MESSAGE_TYPES.LASER_MOVED, target: 'offscreen', data: { x: e.clientX - this.currentCrop.x, y: e.clientY - this.currentCrop.y } });
     }, true);
+    window.addEventListener('resize', () => {
+      this.sendViewportInfo();
+    });
+    this.sendViewportInfo();
     safeSend({ type: MESSAGE_TYPES.CONTENT_SCRIPT_READY });
   }
   async route(msg) {
@@ -321,13 +430,16 @@ class ContentMain {
       case MESSAGE_TYPES.UPDATE_DOCK_STATS:
         this.dock.updateStats(msg.data || {});
         return { success: true };
+      // ✅ 새로운 메시지 타입 추가
       case 'set-recording-crop':
         this.currentCrop = msg.data;
-        this.recordingOverlay.show(this.currentCrop, false);
+        this.recordingOverlay.show(this.currentCrop, msg.data.isSelecting || false);
+        this.sendViewportInfo();
         return { success: true };
       case 'set-selecting-crop':
         this.currentCrop = msg.data;
         this.recordingOverlay.show(this.currentCrop, true);
+        this.sendViewportInfo();
         return { success: true };
       case 'zoom-highlight-toggle':
         if (msg.data?.enabled) this.zoomHL.enable(); else this.zoomHL.disable();
@@ -335,6 +447,13 @@ class ContentMain {
       default:
         return { success: false };
     }
+  }
+  sendViewportInfo() {
+    safeSend({ type: MESSAGE_TYPES.VIEWPORT_INFO, target: 'offscreen', data: {
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      dpr: window.devicePixelRatio || 1
+    }});
   }
 }
 
