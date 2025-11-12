@@ -8,15 +8,6 @@ const REC_MIME = MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? '
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
-function clampCrop(crop, baseW, baseH) {
-  if (!crop) return { x: 0, y: 0, width: baseW, height: baseH };
-  const x = clamp(Math.round(crop.x), 0, baseW - 1);
-  const y = clamp(Math.round(crop.y), 0, baseH - 1);
-  const w = clamp(Math.round(crop.width), 1, baseW - x);
-  const h = clamp(Math.round(crop.height), 1, baseH - y);
-  return { x, y, width: w, height: h };
-}
-
 class OffscreenRecorder {
   constructor() {
     this.mediaStream = null;
@@ -50,6 +41,7 @@ class OffscreenRecorder {
     this.scaleX = 1;
     this.scaleY = 1;
     this.currentCrop = null;
+    this.frameDebugLogged = false;
     this.setupMessageHandlers();
     this.init();
   }
@@ -62,7 +54,11 @@ class OffscreenRecorder {
   }
 
   async notifyReady() {
-    try { await new Promise((resolve) => { chrome.runtime.sendMessage({ type: MESSAGE_TYPES.OFFSCREEN_READY }, () => resolve()); }); } catch {}
+    try {
+      await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: MESSAGE_TYPES.OFFSCREEN_READY }, () => resolve());
+      });
+    } catch {}
   }
 
   setupMessageHandlers() {
@@ -83,13 +79,34 @@ class OffscreenRecorder {
       case MESSAGE_TYPES.RESUME_RECORDING: return this.resumeRecording();
       case MESSAGE_TYPES.CANCEL_RECORDING: return this.cancelRecording();
       case MESSAGE_TYPES.UPDATE_PREFS: this.updatePrefs(message.data); return { success: true };
-      case MESSAGE_TYPES.TOGGLE_LASER: this.state.laserPointerEnabled = !this.state.laserPointerEnabled; this.laser.setEnabled(this.state.laserPointerEnabled); return { success: true };
-      case MESSAGE_TYPES.LASER_MOVED: this.cursorPos = { x: message.data.x, y: message.data.y }; this.laser.move(this.cursorPos.x, this.cursorPos.y); return { success: true };
-      case MESSAGE_TYPES.TOGGLE_CURSOR: this.state.showCursor = !this.state.showCursor; return { success: true };
-      case MESSAGE_TYPES.TOGGLE_ZOOM_HIGHLIGHT: this.state.zoomHighlightEnabled = !this.state.zoomHighlightEnabled; chrome.runtime.sendMessage({ type: 'zoom-highlight-toggle', data: { enabled: this.state.zoomHighlightEnabled } }); return { success: true };
-      case MESSAGE_TYPES.ZOOM_HIGHLIGHT_AREA: if (this.state.zoomHighlightEnabled) this.triggerZoomAnimation(message.data); return { success: true };
-      case MESSAGE_TYPES.VIEWPORT_INFO: this.viewport = { w: message.data.viewportWidth || 0, h: message.data.viewportHeight || 0, dpr: message.data.dpr || 1 }; this.recalcScales(); return { success: true };
-      default: return { success: true };
+      case MESSAGE_TYPES.TOGGLE_LASER:
+        this.state.laserPointerEnabled = !this.state.laserPointerEnabled;
+        this.laser.setEnabled(this.state.laserPointerEnabled);
+        return { success: true };
+      case MESSAGE_TYPES.LASER_MOVED:
+        this.cursorPos = { x: message.data.x, y: message.data.y };
+        this.laser.move(this.cursorPos.x, this.cursorPos.y);
+        return { success: true };
+      case MESSAGE_TYPES.TOGGLE_CURSOR:
+        this.state.showCursor = !this.state.showCursor;
+        return { success: true };
+      case MESSAGE_TYPES.TOGGLE_ZOOM_HIGHLIGHT:
+        this.state.zoomHighlightEnabled = !this.state.zoomHighlightEnabled;
+        chrome.runtime.sendMessage({ type: 'zoom-highlight-toggle', data: { enabled: this.state.zoomHighlightEnabled } });
+        return { success: true };
+      case MESSAGE_TYPES.ZOOM_HIGHLIGHT_AREA:
+        if (this.state.zoomHighlightEnabled) this.triggerZoomAnimation(message.data);
+        return { success: true };
+      case MESSAGE_TYPES.VIEWPORT_INFO:
+        this.viewport = {
+          w: message.data.viewportWidth || 0,
+          h: message.data.viewportHeight || 0,
+          dpr: message.data.dpr || 1
+        };
+        this.recalcScales();
+        return { success: true };
+      default:
+        return { success: true };
     }
   }
 
@@ -118,26 +135,27 @@ class OffscreenRecorder {
       this.scaleX = dpr;
       this.scaleY = dpr;
     }
-    if (this.currentCrop) {
-      this.resizeCanvasToCrop(this.currentCrop);
-    }
   }
 
-  resizeCanvasToCrop(crop) {
-    const outW = Math.max(1, Math.round(crop.width * this.scaleX));
-    const outH = Math.max(1, Math.round(crop.height * this.scaleY));
-    if (this.canvas.width !== outW || this.canvas.height !== outH) {
-      this.canvas.width = outW;
-      this.canvas.height = outH;
-    }
-  }
-
-  async startRecording({ streamId, cropArea, preferences }) {
+  async startRecording({ streamId, cropAreaCSS, view, preferences }) {
     try {
+      console.log('[Offscreen] ========== 녹화 시작 ==========');
+      
       this.updatePrefs(preferences || {});
+
+      if (!view && cropAreaCSS) {
+        console.error('[Offscreen] View context is missing');
+        return { success: false, error: 'View context is missing' };
+      }
+
+      // Step 1: 미디어 스트림 획득
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: this.state.includeAudio ? { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } } : false,
-        video: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } }
+        audio: this.state.includeAudio ? {
+          mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId }
+        } : false,
+        video: {
+          mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId }
+        }
       });
 
       this.video = document.createElement('video');
@@ -147,39 +165,83 @@ class OffscreenRecorder {
       await this.video.play();
       await this.waitForFirstFrame(this.video);
 
+      const videoWidth = this.video.videoWidth;
+      const videoHeight = this.video.videoHeight;
+
+      console.log('[Offscreen] Video stream:', videoWidth, 'x', videoHeight);
+      console.log('[Offscreen] Viewport (from content):', view.viewportWidth, 'x', view.viewportHeight);
+
+      // ✅ Step 2: 비디오 스트림에서 실제 콘텐츠 시작 위치 자동 감지
+      const contentOffset = await this.detectContentOffset(this.video, videoWidth, videoHeight);
+
+      console.log('[Offscreen] Detected content offset:', contentOffset);
+
+      // ✅ Step 3: CSS 좌표를 비디오 좌표로 변환 (오프셋 적용)
+      let videoCrop;
+
+      if (cropAreaCSS) {
+        videoCrop = {
+          x: cropAreaCSS.x,
+          y: cropAreaCSS.y + contentOffset.top,  // ✅ 오프셋 적용!
+          width: cropAreaCSS.width,
+          height: cropAreaCSS.height
+        };
+
+        console.log('[Offscreen] CSS crop (user selection):', cropAreaCSS);
+        console.log('[Offscreen] Video crop (with offset):', videoCrop);
+      } else {
+        // 전체 화면 녹화 - 콘텐츠 영역만
+        videoCrop = {
+          x: 0,
+          y: contentOffset.top,
+          width: videoWidth,
+          height: videoHeight - contentOffset.top - contentOffset.bottom
+        };
+      }
+
+      // Step 4: 범위 검증
+      videoCrop.x = Math.max(0, Math.min(videoCrop.x, videoWidth - 1));
+      videoCrop.y = Math.max(0, Math.min(videoCrop.y, videoHeight - 1));
+      videoCrop.width = Math.max(1, Math.min(videoCrop.width, videoWidth - videoCrop.x));
+      videoCrop.height = Math.max(1, Math.min(videoCrop.height, videoHeight - videoCrop.y));
+
+      console.log('[Offscreen] Final video crop:', videoCrop);
+
+      // 검증
+      const isValid = (videoCrop.x + videoCrop.width <= videoWidth) && 
+                      (videoCrop.y + videoCrop.height <= videoHeight);
+
+      if (!isValid) {
+        console.error('[Offscreen] Crop exceeds video bounds!');
+        return { success: false, error: 'Crop area exceeds video bounds' };
+      }
+
+      this.currentCrop = videoCrop;
+
+      // Step 5: Canvas 설정
       this.canvas = document.getElementById('rec-canvas');
-      this.recalcScales();
+      if (!this.canvas) throw new Error('Canvas not found');
 
-      // ✅ Crop 영역 검증 및 정규화
-      const baseW = this.video.videoWidth;
-      const baseH = this.video.videoHeight;
+      this.canvas.width = videoCrop.width;
+      this.canvas.height = videoCrop.height;
+      this.ctx = this.canvas.getContext('2d', { alpha: false, desynchronized: false });
 
-      const crop = clampCrop(cropArea, baseW, baseH);
+      console.log('[Offscreen] Canvas:', this.canvas.width, 'x', this.canvas.height);
 
-      console.log('[Offscreen] Video dimensions:', baseW, 'x', baseH);
-      console.log('[Offscreen] Crop area:', crop);
-      console.log('[Offscreen] Scale:', this.scaleX, 'x', this.scaleY);
-
-      this.currentCrop = crop;
-      this.resizeCanvasToCrop(crop);
-
-      // ✅ ContentScript에 정규화된 crop 전송
-      chrome.runtime.sendMessage({
-        type: 'set-recording-crop',
-        data: {
-          x: crop.x,
-          y: crop.y,
-          width: crop.width,
-          height: crop.height
-        }
-      });
-
-      const fps = clamp(this.state.fps, 10, 60);
-      const intervalMs = Math.max(15, Math.floor(1000 / fps));
-      const outStream = this.canvas.captureStream(fps);
+      // Step 6: MediaRecorder 설정
+      const targetFPS = clamp(this.state.fps, 10, 60);
+      const intervalMs = Math.max(15, Math.floor(1000 / targetFPS));
+      const canvasStream = this.canvas.captureStream(targetFPS);
 
       const aTrack = this.mediaStream.getAudioTracks()[0];
-      if (aTrack) { try { outStream.addTrack(aTrack); } catch {} }
+      if (aTrack) {
+        try {
+          canvasStream.addTrack(aTrack);
+          console.log('[Offscreen] Audio track added');
+        } catch (e) {
+          console.warn('[Offscreen] Failed to add audio:', e);
+        }
+      }
 
       const options = {
         mimeType: REC_MIME,
@@ -187,7 +249,7 @@ class OffscreenRecorder {
         audioBitsPerSecond: 128000
       };
 
-      this.recorder = new MediaRecorder(outStream, options);
+      this.recorder = new MediaRecorder(canvasStream, options);
       this.chunks = [];
       this.totalSize = 0;
       this.currentRecordingId = `recording_${Date.now()}`;
@@ -196,7 +258,11 @@ class OffscreenRecorder {
         if (e.data && e.data.size > 0) {
           this.chunks.push(e.data);
           this.totalSize += e.data.size;
-          try { await storageManager.saveChunk(this.currentRecordingId, e.data, this.chunks.length - 1); } catch {}
+          try {
+            await storageManager.saveChunk(this.currentRecordingId, e.data, this.chunks.length - 1);
+          } catch (err) {
+            console.warn('[Offscreen] Failed to save chunk:', err);
+          }
         }
       };
 
@@ -211,16 +277,109 @@ class OffscreenRecorder {
       this.pausedAt = 0;
       this.startStats();
 
+      // Step 7: 프레임 렌더링 시작
       if (this.timer) clearInterval(this.timer);
       this.timer = setInterval(() => this.renderFrame(), intervalMs);
 
+      console.log('[Offscreen] Recording started successfully');
+      console.log('[Offscreen] ========== 녹화 시작 완료 ==========');
+      
       return { success: true };
+
     } catch (e) {
-      console.error('[Offscreen] startCapture error:', e);
+      console.error('[Offscreen] Error:', e);
       await this.cleanup();
       return { success: false, error: e.message };
     }
   }
+
+  // ✅ 비디오 스트림에서 실제 콘텐츠 영역 자동 감지
+  async detectContentOffset(video, width, height) {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    ctx.drawImage(video, 0, 0);
+
+    // 상단에서 밝기가 급격히 변하는 지점 찾기 (헤더 끝 = 콘텐츠 시작)
+    let topOffset = 0;
+    let previousBrightness = this.getRowBrightness(ctx, 0, width);
+
+    for (let y = 1; y < Math.min(200, height); y++) {
+      const currentBrightness = this.getRowBrightness(ctx, y, width);
+      const diff = Math.abs(currentBrightness - previousBrightness);
+
+      // 밝기 차이가 50 이상이면 경계로 판단
+      if (diff > 50) {
+        topOffset = y;
+        console.log(`[detectContentOffset] Found edge at y=${y}, brightness change: ${previousBrightness.toFixed(1)} → ${currentBrightness.toFixed(1)}`);
+        break;
+      }
+
+      previousBrightness = currentBrightness;
+    }
+
+    // 하단 오프셋 (보통 0)
+    const bottomOffset = 0;
+
+    canvas.remove();
+
+    return { top: topOffset, bottom: bottomOffset };
+  }
+
+  // 특정 행의 평균 밝기 계산
+  getRowBrightness(ctx, y, width) {
+    const imageData = ctx.getImageData(0, y, width, 1);
+    const data = imageData.data;
+    let sum = 0;
+
+    for (let i = 0; i < data.length; i += 4) {
+      sum += (data[i] + data[i + 1] + data[i + 2]) / 3;
+    }
+
+    return sum / (data.length / 4);
+  }
+
+  // renderFrame은 그대로 유지
+  renderFrame() {
+    try {
+      if (!this.video || !this.canvas || !this.currentCrop || !this.ctx) return;
+
+      const crop = this.currentCrop;
+
+      if (!this.frameDebugLogged) {
+        console.log('[renderFrame] 첫 프레임 렌더링');
+        console.log('  - Video:', this.video.videoWidth, 'x', this.video.videoHeight);
+        console.log('  - Canvas:', this.canvas.width, 'x', this.canvas.height);
+        console.log('  - Crop:', crop);
+        console.log('  - Drawing: video[', crop.x, ',', crop.y, ',', crop.width, ',', crop.height, '] → canvas[0, 0,', this.canvas.width, ',', this.canvas.height, ']');
+        this.frameDebugLogged = true;
+      }
+
+      // ✅ 비디오의 크롭 영역을 Canvas 전체에 그리기
+      this.ctx.drawImage(
+        this.video,
+        crop.x,              // 소스 X
+        crop.y,              // 소스 Y
+        crop.width,          // 소스 Width
+        crop.height,         // 소스 Height
+        0,                   // 대상 X
+        0,                   // 대상 Y
+        this.canvas.width,   // 대상 Width
+        this.canvas.height   // 대상 Height
+      );
+
+      // 추가 기능
+      if (this.zoomAnim) this.drawZoom();
+      if (this.state.showCursor) this.drawCursor();
+      if (this.state.laserPointerEnabled) this.laser.draw(this.ctx);
+
+    } catch (e) {
+      console.error('[renderFrame] Error:', e);
+    }
+  }
+
 
   qualityToBitrate(q) {
     switch (q) {
@@ -242,47 +401,37 @@ class OffscreenRecorder {
 
   renderFrame() {
     try {
-      if (!this.video || !this.ctx || !this.canvas || !this.currentCrop) {
-        if (!this.ctx && this.canvas) {
-          this.ctx = this.canvas.getContext('2d', { alpha: false, desynchronized: false });
-        }
-        if (!this.ctx) return;
-      }
+      if (!this.video || !this.canvas || !this.currentCrop || !this.ctx) return;
 
       const crop = this.currentCrop;
 
-      // ✅ 비디오 소스 좌표 (physical pixels)
-      const sX = Math.round(crop.x);
-      const sY = Math.round(crop.y);
-      const sW = Math.round(crop.width);
-      const sH = Math.round(crop.height);
-
-      // ✅ Canvas 목표 좌표 (항상 0,0부터 시작)
-      const dX = 0;
-      const dY = 0;
-      const dW = this.canvas.width;
-      const dH = this.canvas.height;
-
-      // ✅ 명확한 로깅
-      if (this.frameCount === 0) {
-        console.log('[renderFrame] First frame:');
-        console.log('  Video source:', { sX, sY, sW, sH });
-        console.log('  Canvas dest:', { dX, dY, dW, dH });
-        console.log('  Canvas size:', this.canvas.width, 'x', this.canvas.height);
+      if (!this.frameDebugLogged) {
+        console.log('[renderFrame] 첫 프레임 렌더링');
+        console.log('  - Video:', this.video.videoWidth, 'x', this.video.videoHeight);
+        console.log('  - Canvas:', this.canvas.width, 'x', this.canvas.height);
+        console.log('  - Crop:', crop);
+        console.log('  - Drawing: video[', crop.x, ',', crop.y, ',', crop.width, ',', crop.height, '] → canvas[0, 0,', this.canvas.width, ',', this.canvas.height, ']');
+        this.frameDebugLogged = true;
       }
-      this.frameCount = (this.frameCount || 0) + 1;
 
-      // ✅ drawImage 호출
+      // ✅ 핵심: 비디오의 크롭 영역을 Canvas 전체에 그리기
       this.ctx.drawImage(
         this.video,
-        sX, sY, sW, sH,  // 비디오에서 추출할 영역
-        dX, dY, dW, dH   // Canvas에 그릴 영역
+        crop.x,              // 소스 X (비디오 픽셀)
+        crop.y,              // 소스 Y (비디오 픽셀)
+        crop.width,          // 소스 Width (비디오 픽셀)
+        crop.height,         // 소스 Height (비디오 픽셀)
+        0,                   // 대상 X (Canvas 픽셀)
+        0,                   // 대상 Y (Canvas 픽셀)
+        this.canvas.width,   // 대상 Width (Canvas 픽셀)
+        this.canvas.height   // 대상 Height (Canvas 픽셀)
       );
 
-      // ✅ 나머지 렌더링
+      // 추가 기능
       if (this.zoomAnim) this.drawZoom();
       if (this.state.showCursor) this.drawCursor();
       if (this.state.laserPointerEnabled) this.laser.draw(this.ctx);
+
     } catch (e) {
       console.error('[renderFrame] Error:', e);
     }
@@ -309,7 +458,9 @@ class OffscreenRecorder {
     const scale = Math.max(1.0, this.state.zoomHighlightScale);
     const now = Date.now();
     this.zoomAnim = { area, scale, dur, start: now };
-    setTimeout(() => { if (this.zoomAnim && Date.now() - this.zoomAnim.start >= dur) this.zoomAnim = null; }, dur + 50);
+    setTimeout(() => {
+      if (this.zoomAnim && Date.now() - this.zoomAnim.start >= dur) this.zoomAnim = null;
+    }, dur + 50);
   }
 
   drawZoom() {
@@ -317,7 +468,10 @@ class OffscreenRecorder {
     const crop = this.currentCrop;
     const { area, scale, start, dur } = this.zoomAnim;
     const t = Date.now() - start;
-    if (t > dur) { this.zoomAnim = null; return; }
+    if (t > dur) {
+      this.zoomAnim = null;
+      return;
+    }
     const sx = clamp(area.x - crop.x, 0, crop.width);
     const sy = clamp(area.y - crop.y, 0, crop.height);
     const sw = clamp(area.width, 1, crop.width - sx);
@@ -328,12 +482,20 @@ class OffscreenRecorder {
     const dh = sh * scale;
     const dx = clamp(cx - dw / 2, 0, crop.width - dw);
     const dy = clamp(cy - dh / 2, 0, crop.height - dh);
+
     this.ctx.save();
     this.ctx.beginPath();
     this.ctx.rect(dx, dy, dw, dh);
     this.ctx.clip();
-    this.ctx.drawImage(this.canvas, Math.round(sx * this.scaleX), Math.round(sy * this.scaleY), Math.round(sw * this.scaleX), Math.round(sh * this.scaleY), dx, dy, dw, dh);
+    this.ctx.drawImage(this.canvas,
+      Math.round(sx * this.scaleX),
+      Math.round(sy * this.scaleY),
+      Math.round(sw * this.scaleX),
+      Math.round(sh * this.scaleY),
+      dx, dy, dw, dh
+    );
     this.ctx.restore();
+
     this.ctx.save();
     this.ctx.strokeStyle = 'rgba(255,255,0,0.8)';
     this.ctx.lineWidth = 3;
@@ -366,16 +528,26 @@ class OffscreenRecorder {
   }
 
   stopStats() {
-    if (this.statsInterval) { clearInterval(this.statsInterval); this.statsInterval = null; }
+    if (this.statsInterval) {
+      clearInterval(this.statsInterval);
+      this.statsInterval = null;
+    }
   }
 
   async stopRecording() {
     try {
-      if (!this.recorder || this.recorder.state === 'inactive') return { success: false, error: 'Not recording' };
-      try { this.recorder.requestData(); await delay(120); } catch {}
+      if (!this.recorder || this.recorder.state === 'inactive') {
+        return { success: false, error: 'Not recording' };
+      }
+      try {
+        this.recorder.requestData();
+        await delay(120);
+      } catch {}
       this.recorder.stop();
       return { success: true };
-    } catch (e) { return { success: false, error: e.message }; }
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
   }
 
   pauseRecording() {
@@ -386,7 +558,10 @@ class OffscreenRecorder {
         return { success: true };
       }
       return { success: false };
-    } catch { return { success: false }; }
+    } catch (e) {
+      console.error('[pauseRecording] Error:', e);
+      return { success: false, error: e.message };
+    }
   }
 
   resumeRecording() {
@@ -400,7 +575,10 @@ class OffscreenRecorder {
         return { success: true };
       }
       return { success: false };
-    } catch { return { success: false }; }
+    } catch (e) {
+      console.error('[resumeRecording] Error:', e);
+      return { success: false, error: e.message };
+    }
   }
 
   async cancelRecording() {
@@ -409,13 +587,21 @@ class OffscreenRecorder {
       this.stopStats();
       await this.cleanup();
       return { success: true };
-    } catch { return { success: false }; }
+    } catch (e) {
+      console.error('[cancelRecording] Error:', e);
+      return { success: false, error: e.message };
+    }
   }
 
   async finalize() {
     try {
-      if (!this.chunks.length || this.totalSize < 10) { await this.cleanup(); return; }
+      if (!this.chunks.length || this.totalSize < 10) {
+        await this.cleanup();
+        return;
+      }
+
       const blob = new Blob(this.chunks, { type: this.chunks[0].type || REC_MIME });
+
       try {
         await storageManager.saveRecording({
           id: this.currentRecordingId,
@@ -426,6 +612,7 @@ class OffscreenRecorder {
           filename: generateFilename('webm')
         });
       } catch {}
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -434,16 +621,39 @@ class OffscreenRecorder {
       a.click();
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+
       await this.cleanup();
-    } catch { await this.cleanup(); }
+    } catch (e) {
+      console.error('[finalize] Error:', e);
+      await this.cleanup();
+    }
   }
 
   async cleanup() {
     try {
-      if (this.timer) { clearInterval(this.timer); this.timer = null; }
-      if (this.recorder) { try { if (this.recorder.state !== 'inactive') this.recorder.stop(); } catch {} this.recorder = null; }
-      if (this.mediaStream) { try { this.mediaStream.getTracks().forEach(t => t.stop()); } catch {} this.mediaStream = null; }
-      if (this.video) { try { this.video.pause(); this.video.srcObject = null; } catch {} this.video = null; }
+      if (this.timer) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+      if (this.recorder) {
+        try {
+          if (this.recorder.state !== 'inactive') this.recorder.stop();
+        } catch {}
+        this.recorder = null;
+      }
+      if (this.mediaStream) {
+        try {
+          this.mediaStream.getTracks().forEach(t => t.stop());
+        } catch {}
+        this.mediaStream = null;
+      }
+      if (this.video) {
+        try {
+          this.video.pause();
+          this.video.srcObject = null;
+        } catch {}
+        this.video = null;
+      }
       this.stopStats();
       this.chunks = [];
       this.totalSize = 0;
@@ -452,7 +662,10 @@ class OffscreenRecorder {
       this.startedAt = 0;
       this.pausedAt = 0;
       this.accumulatedPause = 0;
-    } catch {}
+      this.frameDebugLogged = false;
+    } catch (e) {
+      console.error('[cleanup] Error:', e);
+    }
   }
 }
 

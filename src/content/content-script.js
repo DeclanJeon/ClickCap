@@ -82,13 +82,43 @@ class SelectionOverlay {
     const h = Math.abs(e.clientY - this.down.y);
     this.down = null;
     if (w > 30 && h > 30) {
-      const cropArea = { x, y, width: w, height: h };
-      safeSend({ type: MESSAGE_TYPES.AREA_SELECTED, data: { cropArea } });
+      // 영역 선택 완료 시 view 컨텍스트 동봉
+      const cropArea = { x, y, width: w, height: h }; // CSS pixels (visual viewport 기준)
+      const viewContext = this.collectViewContext();
+
+      console.log('[SelectionOverlay] Area selected with crop:', cropArea);
+      console.log('[SelectionOverlay] View context:', viewContext);
+
+      safeSend({
+        type: MESSAGE_TYPES.AREA_SELECTED,
+        data: { cropArea, view: viewContext }
+      });
       this.sendViewportInfo();
       this.hide();
     } else {
       this.box.style.display = 'none';
     }
+  }
+
+  // view 컨텍스트 수집 함수 추가
+  collectViewContext() {
+    const vv = window.visualViewport || null;
+
+    return {
+      // ✅ 핵심: 실제 렌더링되는 뷰포트 크기
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+
+      // 추가 정보 (디버깅용)
+      dpr: window.devicePixelRatio || 1,
+      scrollX: window.scrollX || window.pageXOffset || 0,
+      scrollY: window.scrollY || window.pageYOffset || 0,
+      vvScale: vv ? vv.scale : 1,
+      vvOffsetLeft: vv ? vv.offsetLeft : 0,
+      vvOffsetTop: vv ? vv.offsetTop : 0,
+      vvWidth: vv ? vv.width : window.innerWidth,
+      vvHeight: vv ? vv.height : window.innerHeight
+    };
   }
   keyDown(e) { if (e.key === 'Escape') this.hide(); }
   show() {
@@ -387,6 +417,23 @@ class ZoomHighlighter {
   }
 }
 
+// ✅ View Context 수집 함수
+function collectViewContext() {
+  const vv = window.visualViewport || null;
+  return {
+    dpr: window.devicePixelRatio || 1,
+    scrollX: window.scrollX || 0,
+    scrollY: window.scrollY || 0,
+    vvScale: vv ? vv.scale : 1,
+    vvOffsetLeft: vv ? vv.offsetLeft : 0,
+    vvOffsetTop: vv ? vv.offsetTop : 0,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+    vvWidth: vv ? vv.width : window.innerWidth,
+    vvHeight: vv ? vv.height : window.innerHeight,
+  };
+}
+
 class ContentMain {
   constructor() {
     this.areaSelector = null;
@@ -394,10 +441,34 @@ class ContentMain {
     this.recordingOverlay = new RecordingOverlay();
     this.currentCrop = null;
     this.zoomHL = new ZoomHighlighter(() => this.currentCrop);
+
+    // ✅ 메시지 리스너 추가
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-      if (msg.type === 'ping') { sendResponse({ success: true }); return true; }
-      this.route(msg).then(sendResponse);
-      return true;
+      if (msg.type === 'ping') {
+        sendResponse({ success: true });
+        return true;
+      }
+
+      // REQUEST_VIEW_CONTEXT 핸들러 추가
+      if (msg?.type === 'REQUEST_VIEW_CONTEXT') {
+        const viewContext = this.collectViewContext();
+        console.log('[ContentScript] REQUEST_VIEW_CONTEXT received, sending:', viewContext);
+        sendResponse({ success: true, data: viewContext });
+        return true;
+      }
+
+      // ✅ 에러 처리와 함께 라우팅
+      this.route(msg)
+        .then(response => {
+          console.log('[ContentScript] Route response:', msg.type, response);
+          sendResponse(response);
+        })
+        .catch(error => {
+          console.error('[ContentScript] Route error:', msg.type, error);
+          sendResponse({ success: false, error: error.message });
+        });
+
+      return true;  // 비동기 응답 대기
     });
     document.addEventListener('mousemove', (e) => {
       if (!this.currentCrop) return;
@@ -409,45 +480,92 @@ class ContentMain {
     });
     this.sendViewportInfo();
     safeSend({ type: MESSAGE_TYPES.CONTENT_SCRIPT_READY });
+
+    console.log('[ContentScript] Initialized and ready');
   }
   async route(msg) {
+    console.log('[ContentScript] Routing message:', msg.type);
+
     switch (msg.type) {
       case MESSAGE_TYPES.SHOW_AREA_SELECTOR:
         if (!this.areaSelector) this.areaSelector = new SelectionOverlay();
         this.areaSelector.show();
         return { success: true };
+
       case MESSAGE_TYPES.HIDE_AREA_SELECTOR:
         if (this.areaSelector) this.areaSelector.hide();
         return { success: true };
+
       case MESSAGE_TYPES.SHOW_DOCK:
+        console.log('[ContentScript] SHOW_DOCK received');
+        console.log('[ContentScript] Current crop:', this.currentCrop);
+
         this.dock.show();
-        if (this.currentCrop) this.recordingOverlay.show(this.currentCrop, false);
+
+        if (this.currentCrop) {
+          console.log('[ContentScript] Showing recording overlay with crop:', this.currentCrop);
+          this.recordingOverlay.show(this.currentCrop, false);
+        } else {
+          console.warn('[ContentScript] No current crop to show overlay');
+        }
+
         return { success: true };
+
       case MESSAGE_TYPES.HIDE_DOCK:
+        console.log('[ContentScript] HIDE_DOCK received');
         this.dock.hide();
         this.recordingOverlay.hide();
         return { success: true };
+
       case MESSAGE_TYPES.UPDATE_DOCK_STATS:
         this.dock.updateStats(msg.data || {});
         return { success: true };
-      // ✅ 새로운 메시지 타입 추가
+
+      // ✅ 명시적으로 처리
       case 'set-recording-crop':
+        console.log('[ContentScript] Setting recording crop:', msg.data);
         this.currentCrop = msg.data;
         this.recordingOverlay.show(this.currentCrop, msg.data.isSelecting || false);
         this.sendViewportInfo();
         return { success: true };
+
       case 'set-selecting-crop':
         this.currentCrop = msg.data;
         this.recordingOverlay.show(this.currentCrop, true);
         this.sendViewportInfo();
         return { success: true };
+
       case 'zoom-highlight-toggle':
-        if (msg.data?.enabled) this.zoomHL.enable(); else this.zoomHL.disable();
+        if (msg.data?.enabled) this.zoomHL.enable();
+        else this.zoomHL.disable();
         return { success: true };
+
       default:
-        return { success: false };
+        console.warn('[ContentScript] Unknown message type:', msg.type);
+        return { success: false, error: 'Unknown message type' };
     }
   }
+
+  collectViewContext() {
+    const vv = window.visualViewport || null;
+
+    return {
+      // ✅ 핵심: 실제 렌더링되는 뷰포트 크기
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+
+      // 추가 정보 (디버깅용)
+      dpr: window.devicePixelRatio || 1,
+      scrollX: window.scrollX || window.pageXOffset || 0,
+      scrollY: window.scrollY || window.pageYOffset || 0,
+      vvScale: vv ? vv.scale : 1,
+      vvOffsetLeft: vv ? vv.offsetLeft : 0,
+      vvOffsetTop: vv ? vv.offsetTop : 0,
+      vvWidth: vv ? vv.width : window.innerWidth,
+      vvHeight: vv ? vv.height : window.innerHeight
+    };
+  }
+
   sendViewportInfo() {
     safeSend({ type: MESSAGE_TYPES.VIEWPORT_INFO, target: 'offscreen', data: {
       viewportWidth: window.innerWidth,

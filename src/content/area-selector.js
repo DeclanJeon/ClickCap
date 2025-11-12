@@ -178,7 +178,22 @@ export class AreaSelector {
         dpr: dpr  // ✅ DPR 정보 포함
       };
 
-      this.onAreaSelected(cropArea);
+      // ✅ View Context 수집
+      const vv = window.visualViewport || null;
+      const viewContext = {
+        dpr: window.devicePixelRatio || 1,
+        scrollX: window.scrollX || 0,
+        scrollY: window.scrollY || 0,
+        vvScale: vv ? vv.scale : 1,
+        vvOffsetLeft: vv ? vv.offsetLeft : 0,
+        vvOffsetTop: vv ? vv.offsetTop : 0,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        vvWidth: vv ? vv.width : window.innerWidth,
+        vvHeight: vv ? vv.height : window.innerHeight,
+      };
+
+      this.onAreaSelected({ cropArea, view: viewContext });
 
       this.overlay.style.background = 'transparent';
       this.overlay.style.pointerEvents = 'none';

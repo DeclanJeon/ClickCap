@@ -2,32 +2,71 @@ import { MESSAGE_TYPES, STORAGE_KEYS, DEFAULT_PREFERENCES } from '../utils/const
 import { storageManager } from '../utils/storage.js';
 
 class SafeChrome {
-  static sendMessage(message) {
-    return new Promise((resolve, reject) => {
+  static async sendMessage(message, retries = 3) {
+    console.log('[SafeChrome] sendMessage:', message.type, 'target:', message.target);
+
+    for (let i = 0; i < retries; i++) {
       try {
-        chrome.runtime.sendMessage(message, (res) => {
-          if (chrome.runtime.lastError) return reject(chrome.runtime.lastError);
-          resolve(res || { success: true });
+        const res = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage(message, (response) => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+            } else {
+              resolve(response || { success: true });
+            }
+          });
         });
+
+        console.log('[SafeChrome] sendMessage success:', message.type);
+        return res;
       } catch (e) {
-        reject(e);
+        console.warn(`[SafeChrome] sendMessage attempt ${i + 1} failed, retrying...`, e.message);
+        if (i < retries - 1) {
+          await new Promise(r => setTimeout(r, 200 * (i + 1))); // 지수적 백오프
+        }
       }
-    });
+    }
+
+    console.error('[SafeChrome] sendMessage failed after retries:', message.type);
+    return { success: false, error: 'Receiving end does not exist' };
   }
-  static sendTabMessage(tabId, message) {
-    return new Promise((resolve) => {
+
+  static async sendTabMessage(tabId, message, retries = 3) {
+    console.log('[SafeChrome] sendTabMessage:', message.type, 'to tab:', tabId);
+
+    for (let i = 0; i < retries; i++) {
       try {
-        chrome.tabs.sendMessage(tabId, message, (res) => {
-          if (chrome.runtime.lastError) {
-            resolve({ success: false, error: chrome.runtime.lastError.message });
-          } else {
-            resolve(res || { success: true });
-          }
+        const res = await new Promise((resolve, reject) => {
+          chrome.tabs.sendMessage(tabId, message, (response) => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+            } else {
+              resolve(response || { success: true });
+            }
+          });
         });
+
+        console.log('[SafeChrome] sendTabMessage success:', message.type);
+        return res;
       } catch (e) {
-        resolve({ success: false, error: e.message });
+        console.warn(`[SafeChrome] sendTabMessage attempt ${i + 1} failed, retrying...`, e.message);
+        if (i < retries - 1) {
+          await new Promise(r => setTimeout(r, 200 * (i + 1)));
+        }
       }
-    });
+    }
+
+    console.error('[SafeChrome] sendTabMessage failed after retries:', message.type);
+    return { success: false, error: 'Receiving end does not exist' };
+  }
+}
+
+async function tabExists(tabId) {
+  try {
+    const t = await chrome.tabs.get(tabId);
+    return !!t?.id;
+  } catch {
+    return false;
   }
 }
 
@@ -97,53 +136,118 @@ class ServiceWorkerMain {
           await SafeChrome.sendMessage({ type: MESSAGE_TYPES.UPDATE_PREFS, target: 'offscreen', data: this.state.preferences });
         }
         return { success: true };
+
+      // ✅ 새로운 라우팅 추가
+      case 'set-recording-crop':
+        if (message.target === 'content') {
+          // Offscreen에서 온 메시지를 ContentScript로 포워딩
+          console.log('[ServiceWorker] Forwarding crop to ContentScript');
+          return await SafeChrome.sendTabMessage(
+            this.state.currentTabId,
+            {
+              type: 'set-recording-crop',
+              data: message.data
+            }
+          );
+        }
+        return { success: true };
+
+      // ✅ 기타 메시지도 라우팅
+      case MESSAGE_TYPES.LASER_MOVED:
+        return await SafeChrome.sendMessage({
+          type: MESSAGE_TYPES.LASER_MOVED,
+          target: 'offscreen',
+          data: message.data
+        });
+
+      case MESSAGE_TYPES.VIEWPORT_INFO:
+        return await SafeChrome.sendMessage({
+          type: MESSAGE_TYPES.VIEWPORT_INFO,
+          target: 'offscreen',
+          data: message.data
+        });
+
       default:
         return { success: true };
     }
   }
 
   async ensureContentScript(tabId) {
-    const tryPing = async () => {
-      return await new Promise((resolve) => {
-        try {
-          chrome.tabs.sendMessage(tabId, { type: 'ping' }, (res) => {
-            resolve(res && res.success === true);
-          });
-        } catch {
-          resolve(false);
-        }
-      });
-    };
-    for (let i = 0; i < 5; i++) {
-      const ok = await tryPing();
-      if (ok) return true;
-      await new Promise((r) => setTimeout(r, 200));
+    console.log('[SW] Ensuring ContentScript for tab:', tabId);
+
+    if (!(await tabExists(tabId))) {
+      console.error('[SW] Tab does not exist:', tabId);
+      return false;
     }
+
+    const ping = () => new Promise((res) => {
+      try {
+        chrome.tabs.sendMessage(tabId, { type: 'ping' }, (r) => {
+          res(!!(r && r.success));
+        });
+      } catch {
+        res(false);
+      }
+    });
+
+    // 초기 체크
+    for (let i = 0; i < 5; i++) {
+      const ok = await ping();
+      if (ok) {
+        console.log('[SW] ContentScript already ready');
+        return true;
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    // ContentScript 주입
     try {
+      console.log('[SW] Injecting ContentScript...');
       await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content/content-script.js'] });
-      await new Promise((r) => setTimeout(r, 200));
-    } catch {}
-    for (let i = 0; i < 5; i++) {
-      const ok = await tryPing();
-      if (ok) return true;
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 300));
+    } catch (e) {
+      console.error('[SW] Failed to inject ContentScript:', e);
+      return false;
     }
+
+    // 주입 후 확인
+    for (let i = 0; i < 10; i++) {
+      const ok = await ping();
+      if (ok) {
+        console.log('[SW] ContentScript successfully injected and ready');
+        return true;
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    console.error('[SW] ensureContentScript failed after retries');
     return false;
   }
 
   async ensureOffscreen() {
+    console.log('[SW] Ensuring Offscreen document...');
     const ctx = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
     if (ctx.length === 0) {
-      await chrome.offscreen.createDocument({
-        url: 'src/offscreen/offscreen.html',
-        reasons: ['USER_MEDIA'],
-        justification: 'Screen recording'
-      });
-      await new Promise((r) => setTimeout(r, 150));
+      console.log('[SW] Creating Offscreen document...');
+      try {
+        await chrome.offscreen.createDocument({
+          url: 'src/offscreen/offscreen.html',
+          reasons: ['USER_MEDIA'],
+          justification: 'Screen recording'
+        });
+        await new Promise((r) => setTimeout(r, 300));
+        console.log('[SW] Offscreen document created successfully');
+      } catch (e) {
+        console.error('[SW] Failed to create Offscreen document:', e);
+        throw e;
+      }
+    } else {
+      console.log('[SW] Offscreen document already exists');
     }
   }
 
   async startCmd({ mode, preferences }) {
+    console.log('[SW] startCmd called with mode:', mode);
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return { success: false, error: 'No active tab' };
     if (String(tab.url).startsWith('chrome://') || String(tab.url).startsWith('chrome-extension://')) {
@@ -154,114 +258,131 @@ class ServiceWorkerMain {
     this.state.preferences = { ...this.state.preferences, ...(preferences || {}) };
     await storageManager.saveChromeStorage(STORAGE_KEYS.USER_PREFERENCES, this.state.preferences);
 
-    const ok = await this.ensureContentScript(tab.id);
-    if (!ok) return { success: false, error: 'Content script not ready' };
-
-    if (mode === 'area') {
-      await SafeChrome.sendTabMessage(tab.id, { type: MESSAGE_TYPES.SHOW_AREA_SELECTOR });
-    } else {
-      // ✅ Full-screen 모드에서도 전체 화면 표시
-      const prefs = (await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES))
-        || this.state.preferences;
-
-      // 뷰포트 정보 가져오기 (ContentScript에서 먼저 보냄)
-      await new Promise(r => setTimeout(r, 100));
-
-      // 전체 화면을 cropArea로 설정
-      await SafeChrome.sendTabMessage(tab.id, {
-        type: 'set-recording-crop',
-        data: {
-          x: 0,
-          y: 0,
-          width: window.innerWidth || 1920,
-          height: window.innerHeight || 1080,
-          isSelecting: false
-        }
-      });
-
-      await this.startCapture(null, prefs);
-      if (prefs.showDock) await this.showDockWithRetry();
+    // ContentScript 준비 보장
+    if (!(await this.ensureContentScript(tab.id))) {
+      return { success: false, error: 'Content script not ready' };
     }
 
+    if (mode === 'area') {
+      console.log('[SW] Showing area selector');
+      await SafeChrome.sendTabMessage(tab.id, { type: MESSAGE_TYPES.SHOW_AREA_SELECTOR });
+      return { success: true };
+    }
+
+    // full-screen: viewCtx 요청 후 0,0,w,h 보냄
+    console.log('[SW] Requesting view context for full-screen mode');
+    const viewRes = await new Promise((resolve) => {
+      try {
+        chrome.tabs.sendMessage(tab.id, { type: 'REQUEST_VIEW_CONTEXT' }, (r) => {
+          resolve(r);
+        });
+      } catch (e) {
+        console.error('[SW] Failed to request view context:', e);
+        resolve(null);
+      }
+    });
+
+    const view = viewRes?.data || null;
+    if (!view) {
+      console.error('[SW] No view context received for full-screen mode');
+    }
+
+    console.log('[SW] Starting full-screen capture with view:', view);
+    await this.startCapture({ cropArea: null, view }, this.state.preferences);
+    if (this.state.preferences.showDock) await this.showDockWithRetry();
     return { success: true };
   }
 
-  async areaSelected({ cropArea }) {
-    // ✅ Crop 정규화: logical pixels → physical pixels
-    const dpr = cropArea.dpr || 1;
-    const normalizedCropArea = {
-      x: Math.round(cropArea.x * dpr),
-      y: Math.round(cropArea.y * dpr),
-      width: Math.round(cropArea.width * dpr),
-      height: Math.round(cropArea.height * dpr)
-    };
+  async areaSelected({ cropArea, view }) {
+    console.log('[SW] areaSelected called with:', { cropArea, view });
 
-    this.state.cropArea = normalizedCropArea;
+    this.state.cropArea = cropArea;
 
+    // Step 1: AreaSelector 제거
     await SafeChrome.sendTabMessage(this.state.currentTabId, {
       type: MESSAGE_TYPES.HIDE_AREA_SELECTOR
     });
 
-    // ✅ ContentScript에는 원본 크롭 전송 (UI 표시용)
-    await SafeChrome.sendTabMessage(this.state.currentTabId, {
-      type: 'set-recording-crop',
-      data: {
-        x: cropArea.x,
-        y: cropArea.y,
-        width: cropArea.width,
-        height: cropArea.height,
-        isSelecting: true
-      }
-    });
+    console.log('[SW] Starting area capture with crop and view:', { cropArea, view });
 
     const prefs = (await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES))
       || this.state.preferences;
 
-    // ✅ Offscreen에는 정규화된 크롭 전송 (녹화용)
-    await this.startCapture(normalizedCropArea, prefs);
-
-    if (prefs.showDock) await this.showDockWithRetry();
-
+    // Step 2: ContentScript에 먼저 표시 (녹화 전)
     await SafeChrome.sendTabMessage(this.state.currentTabId, {
       type: 'set-recording-crop',
-      data: {
-        x: cropArea.x,
-        y: cropArea.y,
-        width: cropArea.width,
-        height: cropArea.height,
-        isSelecting: false
-      }
+      data: { ...cropArea, isSelecting:false }
     });
 
-    await SafeChrome.sendTabMessage(this.state.currentTabId, {
-      type: MESSAGE_TYPES.SHOW_DOCK
-    });
+    // Step 3: 실제 녹화 시작
+    await this.startCapture({ cropArea, view }, prefs);
 
+    // Step 4: Dock 표시 (녹화 시작 후)
+    if (prefs.showDock) {
+      console.log('[SW] Showing dock after recording started');
+      await this.showDockWithRetry();
+    }
+
+    // Step 5: 최종 확인
+    console.log('[SW] areaSelected completed successfully');
     return { success: true };
   }
 
   async showDockWithRetry() {
-    if (!this.state.currentTabId) return;
+    if (!this.state.currentTabId) {
+      console.error('[SW] showDockWithRetry: no currentTabId');
+      return;
+    }
+
+    console.log('[SW] showDockWithRetry: attempting to show dock');
+
     for (let i = 0; i < 8; i++) {
-      const res = await SafeChrome.sendTabMessage(this.state.currentTabId, { type: MESSAGE_TYPES.SHOW_DOCK });
-      if (res?.success) return;
+      const res = await SafeChrome.sendTabMessage(
+        this.state.currentTabId,
+        { type: MESSAGE_TYPES.SHOW_DOCK }
+      );
+
+      if (res?.success) {
+        console.log(`[SW] Dock shown successfully on attempt ${i + 1}`);
+        return;
+      }
+
+      console.warn(`[SW] Dock show attempt ${i + 1} failed:`, res?.error);
       await new Promise((r) => setTimeout(r, 200));
     }
+
+    console.error('[SW] Failed to show dock after 8 attempts');
   }
 
-  async startCapture(cropArea, preferences) {
+  async startCapture(payload, preferences) {
+    console.log('[SW] startCapture called with payload:', payload);
     await this.ensureOffscreen();
     await new Promise((r) => setTimeout(r, 100));
+
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: this.state.currentTabId });
+    console.log('[SW] Got streamId:', streamId);
+
+    // Offscreen에 CSS crop과 viewCtx 같이 보냄
     const res = await SafeChrome.sendMessage({
       type: MESSAGE_TYPES.START_RECORDING,
       target: 'offscreen',
-      data: { streamId, cropArea, preferences }
+      data: {
+        streamId,
+        cropAreaCSS: payload.cropArea,
+        view: payload.view,
+        preferences
+      }
     });
-    if (!res?.success) throw new Error(res?.error || 'Offscreen failed');
+
+    if (!res?.success) {
+      console.error('[SW] Offscreen failed:', res?.error);
+      throw new Error(res?.error || 'Offscreen failed');
+    }
+
     this.state.isRecording = true;
     this.state.isPaused = false;
     this.state.startedAt = Date.now();
+    console.log('[SW] Recording started successfully');
   }
 
   async forwardStats(data) {
