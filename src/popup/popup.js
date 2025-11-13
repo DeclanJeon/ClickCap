@@ -43,7 +43,7 @@ class PopupMain {
     
     // 인코딩 진행률 메시지 수신
     chrome.runtime.onMessage.addListener((message) => {
-      if (message.type === 'GIF_ENCODING_PROGRESS') {
+      if (message.type === 'gif-encoding-progress') {
         this.updateEncodingProgress(message.data.progress);
       }
     });

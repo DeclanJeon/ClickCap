@@ -161,6 +161,7 @@ class ServiceWorkerMain {
         });
 
       case MESSAGE_TYPES.VIEWPORT_INFO:
+        try { await this.ensureOffscreen(); } catch {}
         return await SafeChrome.sendMessage({
           type: MESSAGE_TYPES.VIEWPORT_INFO,
           target: 'offscreen',

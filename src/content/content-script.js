@@ -547,6 +547,18 @@ class ContentMain {
         else this.zoomHL.disable();
         return { success: true };
 
+      case 'recording-finished':
+        try {
+          const { format, size, filename } = msg.data || {};
+          // 간단 토스트
+          const toast = document.createElement('div');
+          toast.style.cssText = 'all:initial;position:fixed;bottom:20px;right:20px;z-index:2147483647;background:rgba(0,0,0,.85);color:#fff;padding:10px 14px;border-radius:8px;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 6px 18px rgba(0,0,0,.3)';
+          toast.textContent = `Saved ${filename || format} (${(size/1024/1024).toFixed(2)} MB)`;
+          document.body.appendChild(toast);
+          setTimeout(() => toast.remove(), 4000);
+        } catch {}
+        return { success: true };
+
       default:
         console.warn('[ContentScript] Unknown message type:', msg.type);
         return { success: false, error: 'Unknown message type' };

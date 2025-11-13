@@ -732,7 +732,18 @@ class OffscreenRecorder {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
 
       console.log('[Offscreen] GIF download initiated');
-      
+
+      try {
+        chrome.runtime.sendMessage({
+          type: 'recording-finished',
+          data: {
+            format: 'GIF',
+            size: blob.size,
+            filename: generateFilename('gif')
+          }
+        });
+      } catch {}
+
       await this.cleanup();
     } catch (e) {
       console.error('[finalizeGif] Error:', e);
