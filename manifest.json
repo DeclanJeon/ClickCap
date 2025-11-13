@@ -1,7 +1,7 @@
 {
   "name": "Advanced Screen Recorder",
   "description": "Professional screen recording with area selection and laser pointer",
-  "version": "2.2.2",
+  "version": "2.2.3",
   "manifest_version": 3,
   "minimum_chrome_version": "116",
   "icons": {
@@ -65,11 +65,15 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["src/offscreen/offscreen.html"],
+      "resources": [
+        "src/offscreen/offscreen.html",
+        "src/vendor/gif.worker.js",
+        "src/vendor/gif.js"
+      ],
       "matches": ["<all_urls>"]
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self'"
   }
 }

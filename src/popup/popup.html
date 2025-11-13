@@ -63,17 +63,59 @@
           </select>
         </div>
         <div class="setting-group">
-          <label for="format">포맷</label>
+          <label for="format">녹화 포맷</label>
           <select id="format">
-            <option value="WEBM" selected>WebM</option>
-            <option value="MP4">MP4</option>
+            <option value="WEBM" selected>WebM (고화질, 오디오 지원)</option>
+            <option value="GIF">GIF (애니메이션, 작은 용량)</option>
           </select>
         </div>
-        <div class="setting-group checkbox-group">
-          <label>
-            <input type="checkbox" id="includeAudio" checked>
-            <span>오디오 포함</span>
-          </label>
+
+        <div id="webmOptions">
+          <div class="setting-group checkbox-group">
+            <label>
+              <input type="checkbox" id="includeAudio" checked>
+              <span>오디오 녹음</span>
+            </label>
+          </div>
+        </div>
+
+        <div id="gifOptions" class="hidden">
+          <div class="info-box">
+            <p>ℹ️ <strong>GIF 포맷 안내</strong></p>
+            <ul>
+              <li>오디오가 녹음되지 않습니다</li>
+              <li>256색으로 제한되어 화질이 저하됩니다</li>
+              <li>최대 60초까지 녹화 가능합니다</li>
+              <li>고해상도는 자동으로 축소됩니다 (최대 800px)</li>
+            </ul>
+          </div>
+          
+          <div class="setting-group">
+            <label for="gifQuality">GIF 품질</label>
+            <select id="gifQuality">
+              <option value="1">최고 (파일 크기 큼)</option>
+              <option value="5">높음</option>
+              <option value="10" selected>보통 (권장)</option>
+              <option value="20">낮음 (파일 크기 작음)</option>
+            </select>
+          </div>
+          
+          <div class="setting-group">
+            <label for="gifFps">GIF FPS</label>
+            <select id="gifFps">
+              <option value="8">8 FPS (매우 부드러움)</option>
+              <option value="10" selected>10 FPS (권장)</option>
+              <option value="12">12 FPS</option>
+              <option value="15">15 FPS (최대)</option>
+            </select>
+          </div>
+          
+          <div class="setting-group checkbox-group">
+            <label>
+              <input type="checkbox" id="gifDither">
+              <span>디더링 적용 (화질 향상, 용량 증가)</span>
+            </label>
+          </div>
         </div>
         <div class="setting-group checkbox-group">
           <label>
@@ -121,7 +163,7 @@
           <span class="btn-icon"></span>
           <span class="btn-text">녹화 시작</span>
         </button>
-        <button id="stopBtn" class="btn btn-danger" style="display: none;">
+        <button id="stopBtn" class="btn btn-danger hidden">
           <span class="btn-icon"></span>
           <span class="btn-text">녹화 중지</span>
         </button>
