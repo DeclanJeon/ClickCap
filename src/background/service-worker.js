@@ -31,6 +31,28 @@ class SafeChrome {
     return { success: false, error: 'Receiving end does not exist' };
   }
 
+  // 새로운 메소드: offscreen 문서가 준비되었는지 확인
+  static async ensureOffscreenReady() {
+    try {
+      const ctx = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
+      if (ctx.length === 0) {
+        return false;
+      }
+      
+      // offscreen가 준비되었는지 ping 테스트
+      const pingRes = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'ping', target: 'offscreen' }, (response) => {
+          resolve(response);
+        });
+      });
+      
+      return pingRes?.success || false;
+    } catch (e) {
+      console.warn('[SafeChrome] Offscreen not ready:', e.message);
+      return false;
+    }
+  }
+
   static async sendTabMessage(tabId, message, retries = 3) {
     console.log('[SafeChrome] sendTabMessage:', message.type, 'to tab:', tabId);
 
@@ -61,6 +83,96 @@ class SafeChrome {
   }
 }
 
+// 메시지 큐 시스템 구현
+class MessageQueue {
+  constructor() {
+    this.queues = new Map(); // tabId -> message[]
+    this.processing = new Set(); // tabId -> boolean
+  }
+
+  async enqueue(tabId, message) {
+    if (!this.queues.has(tabId)) {
+      this.queues.set(tabId, []);
+    }
+    
+    this.queues.get(tabId).push(message);
+    
+    // 이미 처리 중이 아니면 큐 처리 시작
+    if (!this.processing.has(tabId)) {
+      await this.processQueue(tabId);
+    }
+  }
+
+  async processQueue(tabId) {
+    if (this.processing.has(tabId)) return;
+    
+    this.processing.add(tabId);
+    const queue = this.queues.get(tabId);
+    
+    while (queue && queue.length > 0) {
+      const message = queue.shift();
+      
+      try {
+        // 탭이 존재하는지 확인
+        if (!(await tabExists(tabId))) {
+          console.warn(`[MessageQueue] Tab ${tabId} no longer exists, discarding messages`);
+          break;
+        }
+        
+        // content script가 준비되었는지 확인
+        const isReady = await this.pingContentScript(tabId);
+        if (!isReady) {
+          console.warn(`[MessageQueue] Content script not ready for tab ${tabId}, retrying later`);
+          queue.unshift(message); // 메시지를 다시 큐에 넣음
+          setTimeout(() => this.processQueue(tabId), 500);
+          break;
+        }
+        
+        // 메시지 전송
+        await SafeChrome.sendTabMessage(tabId, message);
+        console.log(`[MessageQueue] Successfully sent message to tab ${tabId}:`, message.type);
+        
+      } catch (error) {
+        console.error(`[MessageQueue] Failed to send message to tab ${tabId}:`, error);
+        
+        // 마지막 메시지가 아니면 재시도
+        if (queue.length > 0) {
+          queue.unshift(message); // 실패한 메시지를 다시 큐에 넣음
+          setTimeout(() => this.processQueue(tabId), 1000);
+          break;
+        }
+      }
+    }
+    
+    this.processing.delete(tabId);
+  }
+
+  async pingContentScript(tabId) {
+    try {
+      const response = await new Promise((resolve, reject) => {
+        chrome.tabs.sendMessage(tabId, { type: 'ping' }, (response) => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+          } else {
+            resolve(response);
+          }
+        });
+      });
+      return response?.success === true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  clear(tabId) {
+    this.queues.delete(tabId);
+    this.processing.delete(tabId);
+  }
+}
+
+// 전역 메시지 큐 인스턴스
+const messageQueue = new MessageQueue();
+
 async function tabExists(tabId) {
   try {
     const t = await chrome.tabs.get(tabId);
@@ -78,7 +190,8 @@ class ServiceWorkerMain {
       isPaused: false,
       cropArea: null,
       preferences: { ...DEFAULT_PREFERENCES },
-      startedAt: 0
+      startedAt: 0,
+      isStarting: false // 중복 호출 방지 플래그
     };
     this.setup();
   }
@@ -86,12 +199,30 @@ class ServiceWorkerMain {
   setup() {
     chrome.runtime.onInstalled.addListener(() => this.init());
     chrome.runtime.onStartup.addListener(() => this.init());
+    
+    // 전역 에러 핸들러 설정
+    this.setupGlobalErrorHandlers();
+    
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       this.handle(message, sender).then(sendResponse).catch((e) => {
         sendResponse({ success: false, error: e.message });
       });
       return true;
     });
+    
+    // 탭 상태 모니터링
+    chrome.tabs.onRemoved.addListener((tabId) => {
+      console.log(`[SW] Tab ${tabId} removed, clearing message queue`);
+      messageQueue.clear(tabId);
+    });
+    
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+      if (changeInfo.status === 'complete') {
+        console.log(`[SW] Tab ${tabId} updated, processing message queue`);
+        setTimeout(() => messageQueue.processQueue(tabId), 100);
+      }
+    });
+    
     chrome.commands.onCommand.addListener(async (command) => {
       if (command === 'toggle-recording') {
         if (this.state.isRecording) {
@@ -105,6 +236,40 @@ class ServiceWorkerMain {
         await SafeChrome.sendMessage({ type: MESSAGE_TYPES.TOGGLE_LASER, target: 'offscreen' });
       }
     });
+  }
+
+  setupGlobalErrorHandlers() {
+    // chrome.tabs.sendMessage 전역 에러 핸들러
+    const originalSendTabMessage = chrome.tabs.sendMessage;
+    chrome.tabs.sendMessage = function(tabId, message, callback) {
+      if (typeof callback === 'function') {
+        const originalCallback = callback;
+        callback = function(response) {
+          if (chrome.runtime.lastError) {
+            console.warn(`[SW] Suppressed tab message error:`, chrome.runtime.lastError.message);
+            return;
+          }
+          originalCallback(response);
+        };
+      }
+      return originalSendTabMessage.call(chrome.tabs, tabId, message, callback);
+    };
+
+    // chrome.runtime.sendMessage 전역 에러 핸들러
+    const originalSendRuntimeMessage = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = function(message, callback) {
+      if (typeof callback === 'function') {
+        const originalCallback = callback;
+        callback = function(response) {
+          if (chrome.runtime.lastError) {
+            console.warn(`[SW] Suppressed runtime message error:`, chrome.runtime.lastError.message);
+            return;
+          }
+          originalCallback(response);
+        };
+      }
+      return originalSendRuntimeMessage.call(chrome.runtime, message, callback);
+    };
   }
 
   async init() {
@@ -161,12 +326,48 @@ class ServiceWorkerMain {
         });
 
       case MESSAGE_TYPES.VIEWPORT_INFO:
-        try { await this.ensureOffscreen(); } catch {}
+        try {
+          await this.ensureOffscreen();
+          // offscreen가 준비되었는지 확인
+          const isReady = await SafeChrome.ensureOffscreenReady();
+          if (!isReady) {
+            console.warn('[SW] Offscreen not ready for VIEWPORT_INFO');
+            return { success: false, error: 'Offscreen not ready' };
+          }
+        } catch (e) {
+          console.warn('[SW] Failed to ensure offscreen for VIEWPORT_INFO:', e);
+          return { success: false, error: 'Failed to ensure offscreen' };
+        }
         return await SafeChrome.sendMessage({
           type: MESSAGE_TYPES.VIEWPORT_INFO,
           target: 'offscreen',
           data: message.data
         });
+
+      case MESSAGE_TYPES.TOGGLE_ELEMENT_ZOOM:
+        if (message.target === 'offscreen') {
+          // offscreen가 준비되었는지 확인
+          const isReady = await SafeChrome.ensureOffscreenReady();
+          if (!isReady) {
+            console.warn('[SW] Offscreen not ready for TOGGLE_ELEMENT_ZOOM');
+            return { success: false, error: 'Offscreen not ready' };
+          }
+          
+          return await SafeChrome.sendMessage({
+            type: MESSAGE_TYPES.TOGGLE_ELEMENT_ZOOM,
+            target: 'offscreen',
+            data: message.data
+          });
+        } else if (message.target === 'content') {
+          return await SafeChrome.sendTabMessage(
+            this.state.currentTabId,
+            {
+              type: MESSAGE_TYPES.TOGGLE_ELEMENT_ZOOM,
+              data: message.data
+            }
+          );
+        }
+        return { success: true };
 
       default:
         return { success: true };
@@ -249,49 +450,76 @@ class ServiceWorkerMain {
 
   async startCmd({ mode, preferences }) {
     console.log('[SW] startCmd called with mode:', mode);
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { success: false, error: 'No active tab' };
-    if (String(tab.url).startsWith('chrome://') || String(tab.url).startsWith('chrome-extension://')) {
-      return { success: false, error: 'Cannot record chrome:// or extension pages' };
+    
+    // 중복 호출 방지
+    if (this.state.isStarting) {
+      console.warn('[SW] startCmd already in progress, ignoring');
+      return { success: false, error: 'Already starting' };
     }
-
-    this.state.currentTabId = tab.id;
-    this.state.preferences = { ...this.state.preferences, ...(preferences || {}) };
-    await storageManager.saveChromeStorage(STORAGE_KEYS.USER_PREFERENCES, this.state.preferences);
-
-    // ContentScript 준비 보장
-    if (!(await this.ensureContentScript(tab.id))) {
-      return { success: false, error: 'Content script not ready' };
-    }
-
-    if (mode === 'area') {
-      console.log('[SW] Showing area selector');
-      await SafeChrome.sendTabMessage(tab.id, { type: MESSAGE_TYPES.SHOW_AREA_SELECTOR });
-      return { success: true };
-    }
-
-    // full-screen: viewCtx 요청 후 0,0,w,h 보냄
-    console.log('[SW] Requesting view context for full-screen mode');
-    const viewRes = await new Promise((resolve) => {
-      try {
-        chrome.tabs.sendMessage(tab.id, { type: 'REQUEST_VIEW_CONTEXT' }, (r) => {
-          resolve(r);
-        });
-      } catch (e) {
-        console.error('[SW] Failed to request view context:', e);
-        resolve(null);
+    
+    this.state.isStarting = true;
+    
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) {
+        this.state.isStarting = false;
+        return { success: false, error: 'No active tab' };
       }
-    });
+      
+      if (String(tab.url).startsWith('chrome://') || String(tab.url).startsWith('chrome-extension://')) {
+        this.state.isStarting = false;
+        return { success: false, error: 'Cannot record chrome:// or extension pages' };
+      }
 
-    const view = viewRes?.data || null;
-    if (!view) {
-      console.error('[SW] No view context received for full-screen mode');
+      this.state.currentTabId = tab.id;
+      this.state.preferences = { ...this.state.preferences, ...(preferences || {}) };
+      await storageManager.saveChromeStorage(STORAGE_KEYS.USER_PREFERENCES, this.state.preferences);
+
+      // ContentScript 준비 보장 (강화된 버전)
+      const contentScriptReady = await this.ensureContentScript(tab.id);
+      if (!contentScriptReady) {
+        console.error(`[SW] Failed to ensure content script for tab ${tab.id}`);
+        this.state.isStarting = false;
+        return { success: false, error: 'Content script not ready' };
+      }
+
+      if (mode === 'area') {
+        console.log('[SW] Showing area selector');
+        await SafeChrome.sendTabMessage(tab.id, { type: MESSAGE_TYPES.SHOW_AREA_SELECTOR });
+        this.state.isStarting = false;
+        return { success: true };
+      }
+
+      // full-screen: viewCtx 요청 후 0,0,w,h 보냄
+      console.log('[SW] Requesting view context for full-screen mode');
+      const viewRes = await new Promise((resolve) => {
+        try {
+          chrome.tabs.sendMessage(tab.id, { type: 'REQUEST_VIEW_CONTEXT' }, (r) => {
+            resolve(r);
+          });
+        } catch (e) {
+          console.error('[SW] Failed to request view context:', e);
+          resolve(null);
+        }
+      });
+
+      const view = viewRes?.data || null;
+      if (!view) {
+        console.error('[SW] No view context received for full-screen mode');
+      }
+
+      console.log('[SW] Starting full-screen capture with view:', view);
+      await this.startCapture({ cropArea: null, view }, this.state.preferences);
+      if (this.state.preferences.showDock) await this.showDockWithRetry();
+      
+      this.state.isStarting = false;
+      return { success: true };
+      
+    } catch (error) {
+      console.error('[SW] Error in startCmd:', error);
+      this.state.isStarting = false;
+      return { success: false, error: error.message };
     }
-
-    console.log('[SW] Starting full-screen capture with view:', view);
-    await this.startCapture({ cropArea: null, view }, this.state.preferences);
-    if (this.state.preferences.showDock) await this.showDockWithRetry();
-    return { success: true };
   }
 
   async areaSelected({ cropArea, view }) {
@@ -309,8 +537,8 @@ class ServiceWorkerMain {
     const prefs = (await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES))
       || this.state.preferences;
 
-    // Step 2: ContentScript에 먼저 표시 (녹화 전)
-    await SafeChrome.sendTabMessage(this.state.currentTabId, {
+    // Step 2: ContentScript에 먼저 표시 (녹화 전) - 메시지 큐 사용
+    await messageQueue.enqueue(this.state.currentTabId, {
       type: 'set-recording-crop',
       data: { ...cropArea, isSelecting:false }
     });
@@ -337,22 +565,12 @@ class ServiceWorkerMain {
 
     console.log('[SW] showDockWithRetry: attempting to show dock');
 
-    for (let i = 0; i < 8; i++) {
-      const res = await SafeChrome.sendTabMessage(
-        this.state.currentTabId,
-        { type: MESSAGE_TYPES.SHOW_DOCK }
-      );
-
-      if (res?.success) {
-        console.log(`[SW] Dock shown successfully on attempt ${i + 1}`);
-        return;
-      }
-
-      console.warn(`[SW] Dock show attempt ${i + 1} failed:`, res?.error);
-      await new Promise((r) => setTimeout(r, 200));
-    }
-
-    console.error('[SW] Failed to show dock after 8 attempts');
+    // 메시지 큐를 통한 안전한 전송
+    await messageQueue.enqueue(this.state.currentTabId, {
+      type: MESSAGE_TYPES.SHOW_DOCK
+    });
+    
+    console.log('[SW] Dock message queued for delivery');
   }
 
   async startCapture(payload, preferences) {

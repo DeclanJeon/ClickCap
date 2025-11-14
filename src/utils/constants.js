@@ -21,7 +21,9 @@ export const MESSAGE_TYPES = {
   ZOOM_HIGHLIGHT_AREA: 'zoom-highlight-area',
   UPDATE_PREFS: 'update-prefs',
   VIEWPORT_INFO: 'viewport-info',
-  GIF_ENCODING_PROGRESS: 'gif-encoding-progress'
+  GIF_ENCODING_PROGRESS: 'gif-encoding-progress',
+  ELEMENT_CLICKED_ZOOM: 'element-clicked-zoom',
+  TOGGLE_ELEMENT_ZOOM: 'toggle-element-zoom'
 };
 
 export const RECORDING_STATES = {
@@ -80,7 +82,10 @@ export const DEFAULT_PREFERENCES = {
   zoomHighlightScale: 1.2,
   gifFps: 10,
   gifQuality: 10,
-  gifDither: false
+  gifDither: false,
+  clickElementZoomEnabled: false,
+  elementZoomScale: 1.5,
+  elementZoomDuration: 800
 };
 
 export const GIF_CONSTRAINTS = {

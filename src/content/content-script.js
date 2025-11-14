@@ -20,20 +20,93 @@ const MESSAGE_TYPES = {
   TOGGLE_ZOOM_HIGHLIGHT: 'toggle-zoom-highlight',
   ZOOM_HIGHLIGHT_AREA: 'zoom-highlight-area',
   UPDATE_PREFS: 'update-prefs',
-  VIEWPORT_INFO: 'viewport-info'
+  VIEWPORT_INFO: 'viewport-info',
+  ELEMENT_CLICKED_ZOOM: 'element-clicked-zoom',
+  TOGGLE_ELEMENT_ZOOM: 'toggle-element-zoom'
 };
 
-function safeSend(msg) {
+// 강화된 메시지 전송 함수
+function safeSend(msg, retries = 3) {
   return new Promise((resolve) => {
-    try {
-      chrome.runtime.sendMessage(msg, (res) => {
-        resolve(res || { success: true });
-      });
-    } catch {
-      resolve({ success: false });
-    }
+    let attempt = 0;
+    
+    const trySend = () => {
+      attempt++;
+      
+      try {
+        chrome.runtime.sendMessage(msg, (res) => {
+          if (chrome.runtime.lastError) {
+            console.warn(`[ContentScript] Message send attempt ${attempt} failed:`, chrome.runtime.lastError.message);
+            
+            if (attempt < retries) {
+              setTimeout(trySend, 200 * attempt); // 지수적 백오프
+              return;
+            }
+            
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(res || { success: true });
+          }
+        });
+      } catch (error) {
+        console.warn(`[ContentScript] Exception on attempt ${attempt}:`, error.message);
+        
+        if (attempt < retries) {
+          setTimeout(trySend, 200 * attempt);
+          return;
+        }
+        
+        resolve({ success: false, error: error.message });
+      }
+    };
+    
+    trySend();
   });
 }
+
+// 메시지 큐 시스템
+class MessageQueue {
+  constructor() {
+    this.queue = [];
+    this.processing = false;
+  }
+  
+  enqueue(message) {
+    this.queue.push(message);
+    if (!this.processing) {
+      this.processQueue();
+    }
+  }
+  
+  async processQueue() {
+    if (this.processing || this.queue.length === 0) return;
+    
+    this.processing = true;
+    
+    while (this.queue.length > 0) {
+      const message = this.queue.shift();
+      
+      try {
+        const result = await safeSend(message, 2);
+        if (!result.success) {
+          console.warn('[ContentScript] Failed to send queued message, re-queueing:', message);
+          this.queue.unshift(message); // 실패한 메시지를 다시 큐에 넣음
+          setTimeout(() => this.processQueue(), 1000);
+          break;
+        }
+        
+        console.log('[ContentScript] Successfully sent queued message:', message.type);
+        await new Promise(resolve => setTimeout(resolve, 50)); // 메시지 간 간격
+      } catch (error) {
+        console.error('[ContentScript] Error processing queued message:', error);
+      }
+    }
+    
+    this.processing = false;
+  }
+}
+
+const messageQueue = new MessageQueue();
 
 class SelectionOverlay {
   constructor() {
@@ -260,14 +333,20 @@ class RecordingOverlay {
   update(crop) {
     // ✅ 테두리를 실제 녹화 영역 바깥쪽에 표시
     const BORDER_WIDTH = 3;
-    const SAFETY_MARGIN = 5;
+    const SAFETY_MARGIN = 2; // 안전 마진 줄임
     const TOTAL_OFFSET = BORDER_WIDTH + SAFETY_MARGIN;
 
+    // Math.round를 사용하여 픽셀 정밀도 보장
+    const left = Math.round(crop.x - TOTAL_OFFSET);
+    const top = Math.round(crop.y - TOTAL_OFFSET);
+    const width = Math.round(crop.width + TOTAL_OFFSET * 2);
+    const height = Math.round(crop.height + TOTAL_OFFSET * 2);
+
     // 테두리를 크롭 영역보다 바깥쪽으로 이동
-    this.box.style.left = (crop.x - TOTAL_OFFSET) + 'px';
-    this.box.style.top = (crop.y - TOTAL_OFFSET) + 'px';
-    this.box.style.width = (crop.width + TOTAL_OFFSET * 2) + 'px';
-    this.box.style.height = (crop.height + TOTAL_OFFSET * 2) + 'px';
+    this.box.style.left = left + 'px';
+    this.box.style.top = top + 'px';
+    this.box.style.width = width + 'px';
+    this.box.style.height = height + 'px';
   }
 
   hide() {
@@ -307,9 +386,12 @@ class Dock {
     this.zoomBtn = document.createElement('button');
     this.zoomBtn.className = 'btn toggle';
     this.zoomBtn.textContent = 'Zoom';
+    this.clickZoomBtn = document.createElement('button');
+    this.clickZoomBtn.className = 'btn toggle';
+    this.clickZoomBtn.textContent = 'ClickZoom';
     const g1 = document.createElement('div'); g1.className = 'group'; g1.append(this.timeEl, this.sizeEl);
     const g2 = document.createElement('div'); g2.className = 'group'; g2.append(this.pauseBtn, this.stopBtn);
-    const g3 = document.createElement('div'); g3.className = 'group'; g3.append(this.laserBtn, this.cursorBtn, this.zoomBtn);
+    const g3 = document.createElement('div'); g3.className = 'group'; g3.append(this.laserBtn, this.cursorBtn, this.zoomBtn, this.clickZoomBtn);
     this.wrap.append(g1, g2, g3);
     shadow.appendChild(this.wrap);
     this.isPaused = false;
@@ -338,6 +420,16 @@ class Dock {
       e.stopPropagation();
       this.zoomBtn.classList.toggle('active');
       await safeSend({ type: MESSAGE_TYPES.TOGGLE_ZOOM_HIGHLIGHT, target: 'offscreen' });
+    });
+    this.clickZoomBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      this.clickZoomBtn.classList.toggle('active');
+      const enabled = this.clickZoomBtn.classList.contains('active');
+      await safeSend({
+        type: MESSAGE_TYPES.TOGGLE_ELEMENT_ZOOM,
+        target: 'offscreen',
+        data: { enabled }
+      });
     });
   }
   show() {
@@ -424,6 +516,432 @@ class ZoomHighlighter {
   }
 }
 
+// 요소 타입 식별 함수
+function getElementElementType(element) {
+  const tagName = element.tagName.toLowerCase();
+  const className = element.className || '';
+  const role = element.getAttribute('role') || '';
+  
+  // 버튼 타입 세분화
+  if (tagName === 'button') {
+    // 기본 버튼
+    if (className.includes('primary') || className.includes('main')) {
+      return 'primary-button';
+    } else if (className.includes('secondary') || className.includes('sub')) {
+      return 'secondary-button';
+    } else if (className.includes('danger') || className.includes('delete') || className.includes('remove')) {
+      return 'danger-button';
+    }
+    return 'button';
+  }
+  
+  // 입력 버튼
+  if (tagName === 'input' && ['button', 'submit', 'reset'].includes(element.type)) {
+    return element.type === 'submit' ? 'submit-button' : 'input-button';
+  }
+  
+  // 링크 타입 세분화
+  if (tagName === 'a' && element.href) {
+    if (element.href.startsWith('mailto:')) return 'email-link';
+    if (element.href.startsWith('tel:')) return 'phone-link';
+    if (element.href.startsWith('#')) return 'anchor-link';
+    if (element.download) return 'download-link';
+    if (element.target === '_blank') return 'external-link';
+    return 'link';
+  }
+  
+  // 입력 필드 타입 세분화
+  if (tagName === 'input') {
+    switch (element.type) {
+      case 'text':
+      case 'search':
+      case 'email':
+      case 'url':
+      case 'password':
+        return 'text-input';
+      case 'number':
+        return 'number-input';
+      case 'date':
+      case 'datetime-local':
+      case 'time':
+      case 'month':
+      case 'week':
+        return 'date-input';
+      case 'checkbox':
+        return 'checkbox';
+      case 'radio':
+        return 'radio';
+      case 'file':
+        return 'file-input';
+      case 'color':
+        return 'color-input';
+      case 'range':
+        return 'range-input';
+      default:
+        return 'input';
+    }
+  }
+  
+  // 텍스트 영역
+  if (tagName === 'textarea') {
+    return 'textarea';
+  }
+  
+  // 선택 목록
+  if (tagName === 'select') {
+    return element.multiple ? 'multi-select' : 'select';
+  }
+  
+  // 이미지 타입 세분화
+  if (tagName === 'img') {
+    if (className.includes('avatar') || className.includes('profile')) return 'avatar-image';
+    if (className.includes('thumbnail') || className.includes('thumb')) return 'thumbnail-image';
+    if (className.includes('icon')) return 'icon-image';
+    if (element.alt && element.alt.includes('logo')) return 'logo-image';
+    return 'image';
+  }
+  
+  // 아이콘 요소
+  if (tagName === 'i' || tagName === 'svg' ||
+      className.includes('icon') || className.includes('fa-') ||
+      className.includes('material-icons')) {
+    return 'icon';
+  }
+  
+  // 카드 또는 패널
+  if (className.includes('card') || className.includes('panel') ||
+      className.includes('tile') || role === 'article') {
+    return 'card';
+  }
+  
+  // 탭 또는 네비게이션 항목
+  if (className.includes('tab') || className.includes('nav-item') ||
+      role === 'tab' || role === 'menuitem') {
+    return 'tab';
+  }
+  
+  // 헤딩 요소
+  if (/^h[1-6]$/.test(tagName)) {
+    return 'heading';
+  }
+  
+  // 목록 항목
+  if (tagName === 'li') {
+    return 'list-item';
+  }
+  
+  // 테이블 관련 요소
+  if (tagName === 'td' || tagName === 'th') {
+    return 'table-cell';
+  }
+  
+  // 레이블
+  if (tagName === 'label') {
+    return 'label';
+  }
+  
+  // 기본 타입
+  return 'element';
+}
+
+// 요소 정보 수집 함수
+function getElementInfo(element, cropArea) {
+  // 요소의 화면 기준 위치와 크기 정보
+  const rect = element.getBoundingClientRect();
+  
+  // 요소의 실제 크기 (패딩, 테두리 포함)
+  const width = rect.width;
+  const height = rect.height;
+  
+  // 화면 기준 좌표
+  const screenX = rect.left + window.scrollX;
+  const screenY = rect.top + window.scrollY;
+  
+  // 녹화 영역 내에서의 상대적 위치 계산
+  const relativeX = screenX - cropArea.x;
+  const relativeY = screenY - cropArea.y;
+  
+  // 요소가 녹화 영역 내에 완전히 포함되는지 확인
+  const isFullyInRecordingArea =
+    relativeX >= 0 &&
+    relativeY >= 0 &&
+    relativeX + width <= cropArea.width &&
+    relativeY + height <= cropArea.height;
+  
+  // 요소가 녹화 영역과 일부라도 겹치는지 확인
+  const isPartiallyInRecordingArea =
+    relativeX + width > 0 &&
+    relativeY + height > 0 &&
+    relativeX < cropArea.width &&
+    relativeY < cropArea.height;
+  
+  // 녹화 영역 내에서의 실제 표시 영역 계산
+  const visibleArea = {
+    x: Math.max(0, relativeX),
+    y: Math.max(0, relativeY),
+    width: Math.min(width, cropArea.width - relativeX),
+    height: Math.min(height, cropArea.height - relativeY)
+  };
+  
+  // 요소의 중심점 계산
+  const centerX = relativeX + width / 2;
+  const centerY = relativeY + height / 2;
+  
+  // 요소 타입 식별
+  const elementType = getElementElementType(element);
+  
+  return {
+    elementType,
+    width,
+    height,
+    screenX,
+    screenY,
+    relativeX,
+    relativeY,
+    isFullyInRecordingArea,
+    isPartiallyInRecordingArea,
+    visibleArea,
+    centerX,
+    centerY
+  };
+}
+
+// 줌 영역 계산 함수
+function calculateZoomArea(elementInfo, zoomScale = 1.5) {
+  const { visibleArea, elementType, width, height } = elementInfo;
+  
+  // 요소 타입별 기본 패딩과 확대 비율 설정
+  let paddingX = 20;
+  let paddingY = 20;
+  let customScale = zoomScale;
+  
+  // 요소 타입별 세부 설정
+  switch (elementType) {
+    // 버튼 타입
+    case 'primary-button':
+    case 'submit-button':
+      paddingX = Math.max(25, width * 0.4);
+      paddingY = Math.max(25, height * 0.4);
+      customScale = 1.6;
+      break;
+      
+    case 'secondary-button':
+    case 'input-button':
+      paddingX = Math.max(20, width * 0.3);
+      paddingY = Math.max(20, height * 0.3);
+      customScale = 1.4;
+      break;
+      
+    case 'danger-button':
+      paddingX = Math.max(30, width * 0.5);
+      paddingY = Math.max(30, height * 0.5);
+      customScale = 1.7;
+      break;
+      
+    case 'button':
+      paddingX = Math.max(20, width * 0.3);
+      paddingY = Math.max(20, height * 0.3);
+      customScale = 1.4;
+      break;
+      
+    // 링크 타입
+    case 'email-link':
+    case 'phone-link':
+      paddingX = Math.max(15, width * 0.6);
+      paddingY = Math.max(10, height * 0.4);
+      customScale = 1.3;
+      break;
+      
+    case 'download-link':
+    case 'external-link':
+      paddingX = Math.max(20, width * 0.5);
+      paddingY = Math.max(15, height * 0.3);
+      customScale = 1.4;
+      break;
+      
+    case 'anchor-link':
+      paddingX = Math.max(10, width * 0.3);
+      paddingY = Math.max(10, height * 0.3);
+      customScale = 1.2;
+      break;
+      
+    case 'link':
+      paddingX = Math.max(10, width * 0.5);
+      paddingY = Math.max(10, height * 0.3);
+      customScale = 1.3;
+      break;
+      
+    // 입력 필드 타입
+    case 'text-input':
+    case 'search':
+    case 'email':
+    case 'url':
+    case 'password':
+      paddingX = Math.max(20, width * 0.2);
+      paddingY = Math.max(15, height * 0.2);
+      customScale = 1.25;
+      break;
+      
+    case 'number-input':
+    case 'date-input':
+      paddingX = Math.max(15, width * 0.25);
+      paddingY = Math.max(15, height * 0.25);
+      customScale = 1.3;
+      break;
+      
+    case 'textarea':
+      paddingX = Math.max(25, width * 0.15);
+      paddingY = Math.max(25, height * 0.15);
+      customScale = 1.2;
+      break;
+      
+    case 'select':
+    case 'multi-select':
+      paddingX = Math.max(20, width * 0.2);
+      paddingY = Math.max(20, height * 0.2);
+      customScale = 1.25;
+      break;
+      
+    case 'checkbox':
+    case 'radio':
+      paddingX = Math.max(30, width * 0.8);
+      paddingY = Math.max(30, height * 0.8);
+      customScale = 1.8;
+      break;
+      
+    case 'file-input':
+    case 'color-input':
+    case 'range-input':
+      paddingX = Math.max(25, width * 0.3);
+      paddingY = Math.max(25, height * 0.3);
+      customScale = 1.4;
+      break;
+      
+    // 이미지 타입
+    case 'avatar-image':
+    case 'logo-image':
+      paddingX = Math.max(15, width * 0.2);
+      paddingY = Math.max(15, height * 0.2);
+      customScale = 1.3;
+      break;
+      
+    case 'thumbnail-image':
+      paddingX = Math.max(20, width * 0.25);
+      paddingY = Math.max(20, height * 0.25);
+      customScale = 1.4;
+      break;
+      
+    case 'icon-image':
+    case 'icon':
+      paddingX = Math.max(25, width * 0.5);
+      paddingY = Math.max(25, height * 0.5);
+      customScale = 2.0;
+      break;
+      
+    case 'image':
+      paddingX = Math.max(20, width * 0.15);
+      paddingY = Math.max(20, height * 0.15);
+      customScale = 1.3;
+      break;
+      
+    // 컨테이너 요소
+    case 'card':
+    case 'panel':
+      paddingX = Math.max(30, width * 0.1);
+      paddingY = Math.max(30, height * 0.1);
+      customScale = 1.15;
+      break;
+      
+    // 네비게이션 요소
+    case 'tab':
+    case 'nav-item':
+    case 'menuitem':
+      paddingX = Math.max(15, width * 0.3);
+      paddingY = Math.max(15, height * 0.3);
+      customScale = 1.3;
+      break;
+      
+    // 텍스트 요소
+    case 'heading':
+      paddingX = Math.max(20, width * 0.2);
+      paddingY = Math.max(15, height * 0.2);
+      customScale = 1.25;
+      break;
+      
+    case 'list-item':
+      paddingX = Math.max(15, width * 0.25);
+      paddingY = Math.max(10, height * 0.25);
+      customScale = 1.2;
+      break;
+      
+    case 'table-cell':
+      paddingX = Math.max(10, width * 0.2);
+      paddingY = Math.max(10, height * 0.2);
+      customScale = 1.2;
+      break;
+      
+    case 'label':
+      paddingX = Math.max(10, width * 0.3);
+      paddingY = Math.max(8, height * 0.3);
+      customScale = 1.2;
+      break;
+      
+    default:
+      paddingX = Math.max(20, width * 0.25);
+      paddingY = Math.max(20, height * 0.25);
+      customScale = 1.3;
+  }
+  
+  // 확대될 영역 계산
+  const zoomArea = {
+    x: visibleArea.x - paddingX,
+    y: visibleArea.y - paddingY,
+    width: visibleArea.width + (paddingX * 2),
+    height: visibleArea.height + (paddingY * 2)
+  };
+  
+  // 확대 비율 적용
+  const centerX = visibleArea.x + visibleArea.width / 2;
+  const centerY = visibleArea.y + visibleArea.height / 2;
+  
+  zoomArea.width = visibleArea.width * customScale;
+  zoomArea.height = visibleArea.height * customScale;
+  zoomArea.x = centerX - (zoomArea.width / 2);
+  zoomArea.y = centerY - (zoomArea.height / 2);
+  
+  return zoomArea;
+}
+
+// 좌표 보정 함수
+function normalizeCoordinatesToRecordingArea(zoomArea, cropArea) {
+  // 녹화 영역을 벗어나는 좌표 보정
+  const normalizedArea = { ...zoomArea };
+  
+  // X 좌표 보정
+  if (normalizedArea.x < 0) {
+    normalizedArea.width += normalizedArea.x;
+    normalizedArea.x = 0;
+  }
+  
+  // Y 좌표 보정
+  if (normalizedArea.y < 0) {
+    normalizedArea.height += normalizedArea.y;
+    normalizedArea.y = 0;
+  }
+  
+  // 너비 보정 (녹화 영역을 벗어나는 경우)
+  if (normalizedArea.x + normalizedArea.width > cropArea.width) {
+    normalizedArea.width = cropArea.width - normalizedArea.x;
+  }
+  
+  // 높이 보정 (녹화 영역을 벗어나는 경우)
+  if (normalizedArea.y + normalizedArea.height > cropArea.height) {
+    normalizedArea.height = cropArea.height - normalizedArea.y;
+  }
+  
+  return normalizedArea;
+}
+
 // ✅ View Context 수집 함수
 function collectViewContext() {
   const vv = window.visualViewport || null;
@@ -448,11 +966,17 @@ class ContentMain {
     this.recordingOverlay = new RecordingOverlay();
     this.currentCrop = null;
     this.zoomHL = new ZoomHighlighter(() => this.currentCrop);
+    
+    // 새로 추가: 요소 클릭 줌 효과 관련 상태
+    this.elementZoomEnabled = false;
+    this.lastClickTime = 0;
+    this.clickThrottleMs = 300; // 클릭 쓰로틀링
 
-    // ✅ 메시지 리스너 추가
+    // ✅ 강화된 메시지 리스너 추가
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      // ping 메시지 즉시 응답
       if (msg.type === 'ping') {
-        sendResponse({ success: true });
+        sendResponse({ success: true, timestamp: Date.now() });
         return true;
       }
 
@@ -464,18 +988,34 @@ class ContentMain {
         return true;
       }
 
-      // ✅ 에러 처리와 함께 라우팅
-      this.route(msg)
-        .then(response => {
+      // 비동기 라우팅 처리
+      const handleAsync = async () => {
+        try {
+          const response = await this.route(msg);
           console.log('[ContentScript] Route response:', msg.type, response);
           sendResponse(response);
-        })
-        .catch(error => {
+        } catch (error) {
           console.error('[ContentScript] Route error:', msg.type, error);
           sendResponse({ success: false, error: error.message });
-        });
+        }
+      };
 
+      handleAsync();
       return true;  // 비동기 응답 대기
+    });
+    
+    // 페이지 언로드 시 정리
+    window.addEventListener('beforeunload', () => {
+      console.log('[ContentScript] Page unloading, cleaning up');
+      this.cleanup();
+    });
+    
+    // 페이지 가시성 변화 감지
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[ContentScript] Page became visible, processing message queue');
+        messageQueue.processQueue();
+      }
     });
     document.addEventListener('mousemove', (e) => {
       if (!this.currentCrop) return;
@@ -487,13 +1027,61 @@ class ContentMain {
     });
     this.sendViewportInfo();
     safeSend({ type: MESSAGE_TYPES.CONTENT_SCRIPT_READY });
+    
+    // 클릭 이벤트 리스너 설정
+    this.setupClickEventListener();
 
     console.log('[ContentScript] Initialized and ready');
+  }
+  
+  // 클릭 이벤트 리스너 설정
+  setupClickEventListener() {
+    // 캡처 단계에서 클릭 이벤트 감지
+    document.addEventListener('click', (e) => {
+      this.handleClickEvent(e);
+    }, true);
+  }
+  
+  // 클릭 이벤트 처리
+  handleClickEvent(e) {
+    // 기능이 비활성화되었거나 녹화 중이 아니면 무시
+    if (!this.elementZoomEnabled || !this.currentCrop) return;
+    
+    // 클릭 쓰로틀링 적용
+    const now = Date.now();
+    if (now - this.lastClickTime < this.clickThrottleMs) return;
+    this.lastClickTime = now;
+    
+    // 클릭된 요소 정보 수집
+    const elementInfo = getElementInfo(e.target, this.currentCrop);
+    
+    // 녹화 영역과 겹치지 않으면 무시
+    if (!elementInfo.isPartiallyInRecordingArea) return;
+    
+    // 줌 영역 계산
+    const zoomArea = calculateZoomArea(elementInfo, 1.5);
+    const normalizedZoomArea = normalizeCoordinatesToRecordingArea(zoomArea, this.currentCrop);
+    
+    // offscreen.js로 메시지 전송
+    safeSend({
+      type: MESSAGE_TYPES.ELEMENT_CLICKED_ZOOM,
+      target: 'offscreen',
+      data: {
+        elementInfo,
+        zoomArea: normalizedZoomArea,
+        timestamp: now
+      }
+    });
   }
   async route(msg) {
     console.log('[ContentScript] Routing message:', msg.type);
 
     switch (msg.type) {
+      // INITIALIZE_RECORDING 메시지 처리 추가
+      case 'INITIALIZE_RECORDING':
+        console.log('[ContentScript] Initialize recording message received:', msg.data);
+        return { success: true };
+
       case MESSAGE_TYPES.SHOW_AREA_SELECTOR:
         if (!this.areaSelector) this.areaSelector = new SelectionOverlay();
         this.areaSelector.show();
@@ -547,6 +1135,15 @@ class ContentMain {
         else this.zoomHL.disable();
         return { success: true };
 
+      case MESSAGE_TYPES.TOGGLE_ELEMENT_ZOOM:
+        // msg.data가 undefined인 경우 방지
+        if (!msg.data) {
+          console.warn('[ContentScript] TOGGLE_ELEMENT_ZOOM received without data');
+          return { success: false, error: 'No data provided' };
+        }
+        this.elementZoomEnabled = msg.data.enabled;
+        return { success: true };
+
       case 'recording-finished':
         try {
           const { format, size, filename } = msg.data || {};
@@ -586,11 +1183,32 @@ class ContentMain {
   }
 
   sendViewportInfo() {
-    safeSend({ type: MESSAGE_TYPES.VIEWPORT_INFO, target: 'offscreen', data: {
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-      dpr: window.devicePixelRatio || 1
-    }});
+    // 메시지 큐를 통한 안전한 전송
+    messageQueue.enqueue({
+      type: MESSAGE_TYPES.VIEWPORT_INFO,
+      target: 'offscreen',
+      data: {
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        dpr: window.devicePixelRatio || 1
+      }
+    });
+  }
+  
+  cleanup() {
+    // 정리 작업
+    if (this.areaSelector) {
+      this.areaSelector.hide();
+    }
+    if (this.dock) {
+      this.dock.hide();
+    }
+    if (this.recordingOverlay) {
+      this.recordingOverlay.hide();
+    }
+    if (this.zoomHL) {
+      this.zoomHL.disable();
+    }
   }
 }
 

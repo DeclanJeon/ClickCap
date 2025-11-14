@@ -135,6 +135,30 @@
             <span>영역 줌 하이라이트</span>
           </label>
         </div>
+        <div class="setting-group checkbox-group">
+          <label>
+            <input type="checkbox" id="clickElementZoom">
+            <span>클릭 요소 줌 효과</span>
+          </label>
+        </div>
+        <div class="setting-group">
+          <label for="elementZoomScale">요소 줌 배율</label>
+          <select id="elementZoomScale">
+            <option value="1.2">1.2배</option>
+            <option value="1.5" selected>1.5배</option>
+            <option value="2.0">2.0배</option>
+            <option value="2.5">2.5배</option>
+          </select>
+        </div>
+        <div class="setting-group">
+          <label for="elementZoomDuration">요소 줌 애니메이션 시간</label>
+          <select id="elementZoomDuration">
+            <option value="400">0.4초</option>
+            <option value="600">0.6초</option>
+            <option value="800" selected>0.8초</option>
+            <option value="1000">1.0초</option>
+          </select>
+        </div>
         <div class="setting-group">
           <label for="zoomDuration">줌 유지 시간</label>
           <select id="zoomDuration">

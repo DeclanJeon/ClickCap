@@ -19,7 +19,10 @@ class PopupMain {
       showDock: document.getElementById('showDock'),
       gifFps: document.getElementById('gifFps'),
       gifQuality: document.getElementById('gifQuality'),
-      gifDither: document.getElementById('gifDither')
+      gifDither: document.getElementById('gifDither'),
+      clickElementZoom: document.getElementById('clickElementZoom'),
+      elementZoomScale: document.getElementById('elementZoomScale'),
+      elementZoomDuration: document.getElementById('elementZoomDuration')
     };
     
     this.webmOptions = document.getElementById('webmOptions');
@@ -99,6 +102,11 @@ class PopupMain {
     this.controls.zoomScale.value = String(p.zoomHighlightScale || 1.2);
     this.controls.showDock.checked = p.showDock !== false;
     
+    // 새로 추가: 클릭 요소 줌 효과 설정
+    this.controls.clickElementZoom.checked = !!p.clickElementZoomEnabled;
+    this.controls.elementZoomScale.value = String(p.elementZoomScale || 1.5);
+    this.controls.elementZoomDuration.value = String(p.elementZoomDuration || 800);
+    
     if (this.controls.gifFps) {
       this.controls.gifFps.value = String(p.gifFps || 10);
     }
@@ -127,7 +135,12 @@ class PopupMain {
       showDock: this.controls.showDock.checked,
       gifFps: this.controls.gifFps ? parseInt(this.controls.gifFps.value, 10) : 10,
       gifQuality: this.controls.gifQuality ? parseInt(this.controls.gifQuality.value, 10) : 10,
-      gifDither: this.controls.gifDither ? this.controls.gifDither.checked : false
+      gifDither: this.controls.gifDither ? this.controls.gifDither.checked : false,
+      
+      // 새로 추가: 클릭 요소 줌 효과 설정
+      clickElementZoomEnabled: this.controls.clickElementZoom.checked,
+      elementZoomScale: parseFloat(this.controls.elementZoomScale.value),
+      elementZoomDuration: parseInt(this.controls.elementZoomDuration.value, 10)
     };
     
     await storageManager.saveChromeStorage(STORAGE_KEYS.USER_PREFERENCES, this.prefs);
