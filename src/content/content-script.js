@@ -334,6 +334,42 @@ class Dock {
         margin-right: 4px;
         font-weight: 600;
       }
+
+      .encoding-progress {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 150px;
+      }
+
+      .encoding-label {
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.8);
+        font-weight: 500;
+      }
+
+      .encoding-bar {
+        width: 100%;
+        height: 8px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+
+      .encoding-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #4CAF50, #8BC34A);
+        border-radius: 4px;
+        transition: width 0.3s ease;
+        width: 0%;
+      }
+
+      .encoding-percent {
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.7);
+        text-align: center;
+        font-weight: 600;
+      }
     `;
     
     shadow.appendChild(style);
@@ -350,14 +386,36 @@ class Dock {
     statsGroup.className = 'stats';
     
     this.timeEl = document.createElement('div');
-    this.timeEl.className = 'stat';
+    this.timeEl.className = 'stat time-display';
     this.timeEl.textContent = '00:00';
     
     this.sizeEl = document.createElement('div');
-    this.sizeEl.className = 'stat';
+    this.sizeEl.className = 'stat size-display';
     this.sizeEl.textContent = '0 B';
     
     statsGroup.append(this.timeEl, this.sizeEl);
+    
+    // GIF Encoding Progress
+    this.encodingProgress = document.createElement('div');
+    this.encodingProgress.className = 'encoding-progress';
+    this.encodingProgress.style.display = 'none';
+    
+    const encodingLabel = document.createElement('div');
+    encodingLabel.className = 'encoding-label';
+    encodingLabel.textContent = 'GIF 변환 중...';
+    
+    const encodingBar = document.createElement('div');
+    encodingBar.className = 'encoding-bar';
+    
+    this.encodingFill = document.createElement('div');
+    this.encodingFill.className = 'encoding-fill';
+    
+    const encodingPercent = document.createElement('div');
+    encodingPercent.className = 'encoding-percent';
+    encodingPercent.textContent = '0%';
+    
+    encodingBar.appendChild(this.encodingFill);
+    this.encodingProgress.append(encodingLabel, encodingBar, encodingPercent);
     
     // Divider
     const divider1 = document.createElement('div');
@@ -444,6 +502,7 @@ class Dock {
     this.wrap.append(
       this.indicator,
       statsGroup,
+      this.encodingProgress,
       divider1,
       btnGroup,
       divider2,
@@ -580,7 +639,7 @@ class Dock {
     }
   }
   
-  updateStats({ duration, size, isPaused }) {
+  updateStats({ duration, size, isPaused, isEncodingGif, gifEncodingProgress }) {
     // Update time
     const s = Math.floor((duration || 0) / 1000);
     const m = Math.floor(s / 60);
@@ -607,6 +666,41 @@ class Dock {
         this.indicator.classList.add('paused');
       } else {
         this.indicator.classList.remove('paused');
+      }
+    }
+    
+    // GIF 인코딩 중일 때
+    if (isEncodingGif) {
+      this.showEncodingProgress();
+      if (typeof gifEncodingProgress === 'number') {
+        this.updateEncodingProgress(gifEncodingProgress);
+      }
+    } else {
+      this.hideEncodingProgress();
+    }
+  }
+
+  showEncodingProgress() {
+    if (this.encodingProgress) {
+      this.encodingProgress.style.display = 'flex';
+    }
+  }
+
+  hideEncodingProgress() {
+    if (this.encodingProgress) {
+      this.encodingProgress.style.display = 'none';
+    }
+  }
+
+  updateEncodingProgress(progress) {
+    const percentage = Math.round(progress * 100);
+    if (this.encodingFill) {
+      this.encodingFill.style.width = percentage + '%';
+    }
+    if (this.encodingProgress) {
+      const percentElement = this.encodingProgress.querySelector('.encoding-percent');
+      if (percentElement) {
+        percentElement.textContent = percentage + '%';
       }
     }
   }
@@ -1029,6 +1123,15 @@ class ContentMain {
       case MESSAGE_TYPES.TOGGLE_ELEMENT_ZOOM:
         if (!msg.data) return { success: false, error: 'No data provided' };
         this.elementZoomEnabled = msg.data.enabled;
+        return { success: true };
+
+      case 'gif-encoding-progress':
+        if (this.dock && msg.data) {
+          this.dock.updateStats({
+            isEncodingGif: true,
+            gifEncodingProgress: msg.data.progress || 0
+          });
+        }
         return { success: true };
 
       case 'recording-finished':

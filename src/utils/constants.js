@@ -25,8 +25,11 @@ export const STORAGE_KEYS = {
 };
 
 export const DEFAULT_PREFERENCES = {
+  format: 'webm',
   quality: 'HIGH',
   fps: 30,
+  gifQuality: 10,
+  gifMaxWidth: 480,
   includeAudio: true,
   showDock: true,
   clickElementZoomEnabled: true,

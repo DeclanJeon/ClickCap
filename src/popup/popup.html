@@ -43,8 +43,17 @@
         </div>
       </section>
       <section class="settings">
-        <h2>설정</h2>
+        <h2>녹화 설정</h2>
+        
         <div class="setting-group">
+          <label for="format">출력 포맷</label>
+          <select id="format">
+            <option value="webm" selected>WebM (비디오)</option>
+            <option value="gif">GIF (애니메이션)</option>
+          </select>
+        </div>
+        
+        <div class="setting-group" id="qualityGroup">
           <label for="quality">화질</label>
           <select id="quality">
             <option value="LOW">낮음 (2 Mbps)</option>
@@ -53,20 +62,45 @@
             <option value="ULTRA">최고 (15 Mbps)</option>
           </select>
         </div>
-        <div class="setting-group">
+        
+        <div class="setting-group" id="fpsGroup">
           <label for="fps">FPS</label>
           <select id="fps">
+            <option value="10">10 FPS (GIF 권장)</option>
+            <option value="15">15 FPS</option>
             <option value="24">24 FPS</option>
             <option value="30" selected>30 FPS</option>
             <option value="60">60 FPS</option>
           </select>
         </div>
-        <div class="setting-group checkbox-group">
+        
+        <div class="setting-group" id="gifQualityGroup" style="display: none;">
+          <label for="gifQuality">GIF 품질</label>
+          <select id="gifQuality">
+            <option value="1">최고 (느림)</option>
+            <option value="10" selected>높음</option>
+            <option value="20">중간</option>
+            <option value="30">낮음 (빠름)</option>
+          </select>
+        </div>
+        
+        <div class="setting-group" id="gifSizeGroup" style="display: none;">
+          <label for="gifMaxWidth">GIF 최대 너비</label>
+          <select id="gifMaxWidth">
+            <option value="320">320px (작음)</option>
+            <option value="480" selected>480px (중간)</option>
+            <option value="640">640px (큼)</option>
+            <option value="800">800px (최대)</option>
+          </select>
+        </div>
+        
+        <div class="setting-group checkbox-group" id="audioGroup">
           <label>
             <input type="checkbox" id="includeAudio" checked>
             <span>오디오 포함</span>
           </label>
         </div>
+        
         <div class="setting-group checkbox-group">
           <label>
             <input type="checkbox" id="showDock" checked>

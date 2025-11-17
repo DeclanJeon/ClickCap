@@ -1,8 +1,8 @@
 import { MESSAGE_TYPES, DEFAULT_PREFERENCES } from '../utils/constants.js';
 import { generateFilename } from '../utils/video-utils.js';
 
-const REC_MIME = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-  ? 'video/webm;codecs=vp9,opus'
+const REC_MIME = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') 
+  ? 'video/webm;codecs=vp9,opus' 
   : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
   ? 'video/webm;codecs=vp8,opus'
   : 'video/webm';
@@ -28,17 +28,15 @@ class OffscreenRecorder {
     this.isStopping = false;
     this.currentCrop = null;
     this.frameCount = 0;
-    this.calibrated = false;
-    this.calibratedOffsetY = 0;
 
-    // 기본 설정 (DEFAULT_PREFERENCES에서 가져옴)
-    this.state = {
-      fps: DEFAULT_PREFERENCES.fps || 30,
-      quality: DEFAULT_PREFERENCES.quality || 'HIGH',
-      includeAudio: DEFAULT_PREFERENCES.includeAudio !== false
-    };
+    // GIF 관련
+    this.gifEncoder = null;
+    this.gifFrames = [];
+    this.isGifMode = false;
+    this.isEncodingGif = false;
+    this.gifEncodingProgress = 0;
 
-    // 줌 관련 상태 추가
+    // 클릭 줌 관련
     this.zoomState = {
       isZooming: false,
       targetArea: null,
@@ -46,6 +44,19 @@ class OffscreenRecorder {
       duration: 800,
       scale: 1.5,
       easeProgress: 0
+    };
+
+    // 기본 설정
+    this.state = {
+      format: DEFAULT_PREFERENCES.format || 'webm',
+      fps: DEFAULT_PREFERENCES.fps || 30,
+      quality: DEFAULT_PREFERENCES.quality || 'HIGH',
+      gifQuality: DEFAULT_PREFERENCES.gifQuality || 10,
+      gifMaxWidth: DEFAULT_PREFERENCES.gifMaxWidth || 480,
+      includeAudio: DEFAULT_PREFERENCES.includeAudio !== false,
+      clickElementZoomEnabled: DEFAULT_PREFERENCES.clickElementZoomEnabled !== false,
+      elementZoomScale: DEFAULT_PREFERENCES.elementZoomScale || 1.5,
+      elementZoomDuration: DEFAULT_PREFERENCES.elementZoomDuration || 800
     };
 
     this.setupMessageHandlers();
@@ -104,6 +115,7 @@ class OffscreenRecorder {
         sendResponse(result || { success: true });
         await delay(10);
       } catch (e) {
+        console.error('[Offscreen] Message handling error:', e);
         sendResponse({ success: false, error: e.message });
       }
     }
@@ -112,14 +124,23 @@ class OffscreenRecorder {
 
   async handleMessage(message) {
     switch (message.type) {
-      case MESSAGE_TYPES.START_RECORDING: return this.startRecording(message.data);
-      case MESSAGE_TYPES.STOP_RECORDING: return this.stopRecording();
-      case MESSAGE_TYPES.PAUSE_RECORDING: return this.pauseRecording();
-      case MESSAGE_TYPES.RESUME_RECORDING: return this.resumeRecording();
-      case MESSAGE_TYPES.CANCEL_RECORDING: return this.cancelRecording();
-      case MESSAGE_TYPES.UPDATE_PREFS: this.updatePrefs(message.data); return { success: true };
-      case MESSAGE_TYPES.ELEMENT_CLICKED_ZOOM: return this.handleElementZoom(message.data);
-      default: return { success: true };
+      case MESSAGE_TYPES.START_RECORDING: 
+        return this.startRecording(message.data);
+      case MESSAGE_TYPES.STOP_RECORDING: 
+        return this.stopRecording();
+      case MESSAGE_TYPES.PAUSE_RECORDING: 
+        return this.pauseRecording();
+      case MESSAGE_TYPES.RESUME_RECORDING: 
+        return this.resumeRecording();
+      case MESSAGE_TYPES.CANCEL_RECORDING: 
+        return this.cancelRecording();
+      case MESSAGE_TYPES.UPDATE_PREFS: 
+        this.updatePrefs(message.data); 
+        return { success: true };
+      case MESSAGE_TYPES.ELEMENT_CLICKED_ZOOM:
+        return this.handleElementZoom(message.data);
+      default: 
+        return { success: true };
     }
   }
 
@@ -127,6 +148,10 @@ class OffscreenRecorder {
     if (!prefs) return;
     
     const oldState = { ...this.state };
+    
+    if (typeof prefs.format !== 'undefined') {
+      this.state.format = prefs.format;
+    }
     
     if (typeof prefs.fps !== 'undefined') {
       this.state.fps = clamp(parseInt(prefs.fps, 10), 10, 60);
@@ -136,39 +161,49 @@ class OffscreenRecorder {
       this.state.quality = prefs.quality;
     }
     
+    if (typeof prefs.gifQuality !== 'undefined') {
+      this.state.gifQuality = clamp(parseInt(prefs.gifQuality, 10), 1, 30);
+    }
+    
+    if (typeof prefs.gifMaxWidth !== 'undefined') {
+      this.state.gifMaxWidth = clamp(parseInt(prefs.gifMaxWidth, 10), 320, 800);
+    }
+    
     if (typeof prefs.includeAudio !== 'undefined') {
       this.state.includeAudio = prefs.includeAudio;
+    }
+
+    if (typeof prefs.clickElementZoomEnabled !== 'undefined') {
+      this.state.clickElementZoomEnabled = prefs.clickElementZoomEnabled;
+    }
+
+    if (typeof prefs.elementZoomScale !== 'undefined') {
+      this.state.elementZoomScale = parseFloat(prefs.elementZoomScale) || 1.5;
+      this.zoomState.scale = this.state.elementZoomScale;
+    }
+
+    if (typeof prefs.elementZoomDuration !== 'undefined') {
+      this.state.elementZoomDuration = parseInt(prefs.elementZoomDuration, 10) || 800;
+      this.zoomState.duration = this.state.elementZoomDuration;
     }
     
     console.log('🔧 [Offscreen] Preferences updated:', {
       old: oldState,
       new: this.state
     });
-    
-    this.updateZoomPreferences(prefs);
-  }
-
-  updateZoomPreferences(prefs) {
-    if (!prefs) return;
-    
-    if (typeof prefs.elementZoomScale !== 'undefined') {
-      this.zoomState.scale = parseFloat(prefs.elementZoomScale) || 1.5;
-    }
-    
-    if (typeof prefs.elementZoomDuration !== 'undefined') {
-      this.zoomState.duration = parseInt(prefs.elementZoomDuration, 10) || 800;
-    }
   }
 
   handleElementZoom(data) {
-    if (!data?.zoomArea) return { success: false };
+    if (!data?.zoomArea || !this.state.clickElementZoomEnabled) {
+      return { success: false };
+    }
     
     this.zoomState.isZooming = true;
     this.zoomState.targetArea = data.zoomArea;
     this.zoomState.startTime = data.timestamp || Date.now();
     this.zoomState.easeProgress = 0;
     
-    console.log('🔍 [Zoom] Started:', {
+    console.log('🔍 [Offscreen] Zoom started:', {
       area: this.zoomState.targetArea,
       scale: this.zoomState.scale,
       duration: this.zoomState.duration
@@ -182,16 +217,24 @@ class OffscreenRecorder {
       // 설정 먼저 업데이트
       this.updatePrefs(preferences || {});
       
+      this.isGifMode = this.state.format === 'gif';
+      this.isEncodingGif = false;
+      this.gifEncodingProgress = 0;
+      
       console.log('🎬 [Offscreen] Starting recording with settings:', {
+        format: this.state.format,
         fps: this.state.fps,
         quality: this.state.quality,
-        bitrate: this.qualityToBitrate(this.state.quality),
-        includeAudio: this.state.includeAudio
+        gifQuality: this.state.gifQuality,
+        gifMaxWidth: this.state.gifMaxWidth,
+        bitrate: this.isGifMode ? 'N/A' : this.qualityToBitrate(this.state.quality),
+        includeAudio: this.state.includeAudio,
+        clickZoom: this.state.clickElementZoomEnabled
       });
 
       // 미디어 스트림 가져오기
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: this.state.includeAudio ? {
+        audio: (this.state.includeAudio && !this.isGifMode) ? {
           mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId }
         } : false,
         video: {
@@ -212,6 +255,7 @@ class OffscreenRecorder {
 
       console.log('📹 [Offscreen] Video stream ready:', vW + 'x' + vH);
 
+      // Crop 영역 계산
       let crop;
       if (cropAreaCSS && view) {
         const extraVertical = vH - view.viewportHeight;
@@ -235,7 +279,6 @@ class OffscreenRecorder {
         crop.y = Math.max(0, Math.min(crop.y, vH - 1));
         crop.width = Math.max(10, Math.min(crop.width, vW - crop.x));
         crop.height = Math.max(10, Math.min(crop.height, vH - crop.y));
-        
       } else {
         crop = { x: 0, y: 0, width: vW, height: vH };
       }
@@ -243,23 +286,45 @@ class OffscreenRecorder {
       this.currentCrop = crop;
       this.frameCount = 0;
 
+      // Canvas 설정
       this.canvas = document.getElementById('rec-canvas');
       if (!this.canvas) {
         throw new Error('Canvas element not found');
       }
       
-      this.canvas.width = crop.width;
-      this.canvas.height = crop.height;
-      this.ctx = this.canvas.getContext('2d', { alpha: false });
+      // GIF 모드일 경우 크기 조정
+      if (this.isGifMode) {
+        const aspectRatio = crop.height / crop.width;
+        const gifWidth = Math.min(crop.width, this.state.gifMaxWidth);
+        const gifHeight = Math.round(gifWidth * aspectRatio);
+        
+        this.canvas.width = gifWidth;
+        this.canvas.height = gifHeight;
+        
+        console.log('🎨 [Offscreen] GIF Canvas size:', gifWidth + 'x' + gifHeight);
+      } else {
+        this.canvas.width = crop.width;
+        this.canvas.height = crop.height;
+        
+        console.log('🎨 [Offscreen] Canvas ready:', crop.width + 'x' + crop.height);
+      }
+      
+      // willReadFrequently 속성 추가 (GIF 모드에서 성능 개선)
+      this.ctx = this.canvas.getContext('2d', { 
+        alpha: false,
+        willReadFrequently: this.isGifMode 
+      });
       
       if (!this.ctx) {
         throw new Error('Failed to get canvas context');
       }
 
-      console.log('🎨 [Offscreen] Canvas ready:', crop.width + 'x' + crop.height);
-
       // 녹화 시작
-      await this.startVideoRecording();
+      if (this.isGifMode) {
+        await this.initializeGifEncoder();
+      } else {
+        await this.startVideoRecording();
+      }
 
       this.startedAt = Date.now();
       this.pausedAt = 0;
@@ -276,9 +341,66 @@ class OffscreenRecorder {
       return { success: true };
       
     } catch (e) {
-      console.error('[Offscreen] startRecording failed:', e);
+      console.error('❌ [Offscreen] startRecording failed:', e);
       await this.cleanup();
       return { success: false, error: e.message };
+    }
+  }
+
+  async initializeGifEncoder() {
+    try {
+      console.log('🎨 [Offscreen] Initializing GIF encoder...');
+      
+      if (typeof GIF === 'undefined') {
+        throw new Error('GIF.js library not loaded');
+      }
+      
+      this.gifEncoder = new GIF({
+        workers: 2,
+        quality: this.state.gifQuality,
+        width: this.canvas.width,
+        height: this.canvas.height,
+        workerScript: chrome.runtime.getURL('src/vendor/gif.worker.js'),
+        transparent: null,
+        background: '#ffffff'
+      });
+
+      this.gifFrames = [];
+      this.currentRecordingId = `recording_${Date.now()}`;
+
+      this.gifEncoder.on('finished', (blob) => {
+        console.log('✅ [Offscreen] GIF encoding finished');
+        this.isEncodingGif = false;
+        this.handleGifFinished(blob);
+      });
+
+      this.gifEncoder.on('progress', (progress) => {
+        this.gifEncodingProgress = progress;
+        console.log(`📊 [Offscreen] GIF encoding progress: ${(progress * 100).toFixed(1)}%`);
+        
+        // 진행률을 content script로 전송
+        try {
+          chrome.runtime.sendMessage({
+            type: 'gif-encoding-progress',
+            data: {
+              progress: progress,
+              percentage: Math.round(progress * 100)
+            }
+          }, () => {
+            if (chrome.runtime.lastError) {
+              // Silently ignore
+            }
+          });
+        } catch (e) {
+          // Silently ignore
+        }
+      });
+
+      console.log('✅ [Offscreen] GIF encoder initialized');
+      
+    } catch (e) {
+      console.error('❌ [Offscreen] initializeGifEncoder failed:', e);
+      throw e;
     }
   }
 
@@ -331,13 +453,14 @@ class OffscreenRecorder {
       };
 
       this.recorder.onerror = (e) => {
-        console.error('Recorder error:', e);
+        console.error('❌ [Offscreen] Recorder error:', e);
       };
 
       this.recorder.start(1000);
+      console.log('✅ [Offscreen] MediaRecorder started');
       
     } catch (e) {
-      console.error('startVideoRecording failed:', e);
+      console.error('❌ [Offscreen] startVideoRecording failed:', e);
       throw e;
     }
   }
@@ -353,7 +476,7 @@ class OffscreenRecorder {
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
       // 줌 효과 적용
-      if (this.zoomState.isZooming) {
+      if (this.zoomState.isZooming && this.state.clickElementZoomEnabled) {
         this.renderWithZoom(c);
       } else {
         // 일반 렌더링
@@ -364,9 +487,24 @@ class OffscreenRecorder {
         );
       }
 
-      this.frameCount++;
+      // GIF 모드일 경우 프레임 캡처
+      if (this.isGifMode && this.gifEncoder && !this.pausedAt) {
+        const delay = Math.round(1000 / this.state.fps);
+        this.gifEncoder.addFrame(this.ctx, { copy: true, delay });
+        this.frameCount++;
+        
+        // 최대 프레임 수 제한 (메모리 보호)
+        const maxFrames = this.state.fps * 60; // 최대 60초
+        if (this.frameCount >= maxFrames) {
+          console.warn('⚠️ [Offscreen] Max frames reached, stopping recording');
+          this.stopRecording();
+        }
+      } else if (!this.isGifMode) {
+        this.frameCount++;
+      }
+
     } catch (e) {
-      console.error('[renderFrame] Error:', e);
+      console.error('[Offscreen] renderFrame error:', e);
     }
   }
 
@@ -377,8 +515,8 @@ class OffscreenRecorder {
     
     // Ease-in-out 함수
     const easeInOutCubic = (t) => {
-      return t < 0.5
-        ? 4 * t * t * t
+      return t < 0.5 
+        ? 4 * t * t * t 
         : 1 - Math.pow(-2 * t + 2, 3) / 2;
     };
     
@@ -396,7 +534,7 @@ class OffscreenRecorder {
     
     const zoomArea = this.zoomState.targetArea;
     
-    // 줌 중심점 계산 (crop area 내의 상대 좌표)
+    // 줌 중심점 계산
     const zoomCenterX = zoomArea.x + zoomArea.width / 2;
     const zoomCenterY = zoomArea.y + zoomArea.height / 2;
     
@@ -408,15 +546,9 @@ class OffscreenRecorder {
     const zoomedX = cropArea.x + zoomCenterX - scaledWidth / 2;
     const zoomedY = cropArea.y + zoomCenterY - scaledHeight / 2;
     
-    // 경계 체크 (최적화)
-    const maxX = cropArea.x + cropArea.width - scaledWidth;
-    const maxY = cropArea.y + cropArea.height - scaledHeight;
-    const finalX = Math.max(cropArea.x, Math.min(zoomedX, maxX));
-    const finalY = Math.max(cropArea.y, Math.min(zoomedY, maxY));
-    
-    // 성능 최적화: 이미지 품질 설정
-    this.ctx.imageSmoothingEnabled = true;
-    this.ctx.imageSmoothingQuality = 'high';
+    // 경계 체크
+    const finalX = Math.max(cropArea.x, Math.min(zoomedX, cropArea.x + cropArea.width - scaledWidth));
+    const finalY = Math.max(cropArea.y, Math.min(zoomedY, cropArea.y + cropArea.height - scaledHeight));
     
     // 줌 효과 렌더링
     this.ctx.drawImage(
@@ -428,61 +560,9 @@ class OffscreenRecorder {
     // 줌 완료 체크
     if (progress >= 1) {
       this.zoomState.isZooming = false;
-      console.log('✅ [Zoom] Completed');
+      console.log('✅ [Offscreen] Zoom completed');
     }
   }
-
-  calibrateCropOffset() {
-    try {
-      const vW = this.video.videoWidth;
-      const vH = this.video.videoHeight;
-
-      const tmpCanvas = document.createElement('canvas');
-      tmpCanvas.width = vW;
-      tmpCanvas.height = vH;
-      const tmpCtx = tmpCanvas.getContext('2d');
-
-      tmpCtx.drawImage(this.video, 0, 0, vW, vH);
-
-      // 상단 0~400px 정도 안에서 "상당히 밝은/흰 영역"이 계속되는 구간을 찾는다
-      const scanHeight = Math.min(400, vH);
-      const threshold = 240; // 0~255
-      let headerEndY = 0;
-
-      for (let y = 0; y < scanHeight; y++) {
-        const rowData = tmpCtx.getImageData(0, y, vW, 1).data;
-        let brightPixels = 0;
-        for (let i = 0; i < rowData.length; i += 4) {
-          const r = rowData[i];
-          const g = rowData[i + 1];
-          const b = rowData[i + 2];
-          const lum = (r + g + b) / 3;
-          if (lum > threshold) brightPixels++;
-        }
-        const ratio = brightPixels / (rowData.length / 4);
-
-        // 상단 UI는 거의 흰색/밝은 색 비율이 높고,
-        // 영상 영역에 들어오면 비율이 확 떨어진다고 가정
-        if (ratio < 0.7) {
-          headerEndY = y;
-          break;
-        }
-      }
-
-      this.calibratedOffsetY = headerEndY;
-      this.calibrated = true;
-
-      console.log('📏 [Calibrate] headerEndY:', headerEndY);
-      console.log('📏 [Calibrate] calibratedOffsetY set to:', this.calibratedOffsetY);
-
-      tmpCanvas.remove();
-    } catch (e) {
-      console.warn('⚠️ [Calibrate] Failed, fall back to no offset:', e);
-      this.calibratedOffsetY = 0;
-      this.calibrated = true;
-    }
-  }
-
 
   qualityToBitrate(q) {
     const bitrateMap = {
@@ -499,7 +579,7 @@ class OffscreenRecorder {
   async waitForFirstFrame(video) {
     const deadline = Date.now() + 10000;
     while (video.readyState < video.HAVE_CURRENT_DATA) {
-      if (Date.now() > deadline) throw new Error('Timeout');
+      if (Date.now() > deadline) throw new Error('Timeout waiting for video');
       await delay(50);
     }
   }
@@ -516,22 +596,31 @@ class OffscreenRecorder {
         if (dur < 0) dur = 0;
       }
       
+      // GIF 모드일 경우 예상 크기 계산
+      let size = this.totalSize;
+      if (this.isGifMode) {
+        // 프레임당 대략적인 크기 추정
+        size = this.frameCount * 50000;
+      }
+      
       try {
         chrome.runtime.sendMessage({
           type: MESSAGE_TYPES.RECORDING_STATS,
           data: {
             duration: dur,
-            size: this.totalSize,
-            isRecording: this.recorder?.state === 'recording',
-            isPaused: this.pausedAt > 0
+            size: size,
+            isRecording: this.isGifMode ? !this.isEncodingGif : (this.recorder?.state === 'recording'),
+            isPaused: this.pausedAt > 0,
+            isEncodingGif: this.isEncodingGif,
+            gifEncodingProgress: this.gifEncodingProgress
           }
-        }, (response) => {
+        }, () => {
           if (chrome.runtime.lastError) {
-            console.warn('Failed to send stats:', chrome.runtime.lastError.message);
+            // Silently ignore
           }
         });
       } catch (e) {
-        console.warn('Exception sending stats:', e);
+        console.warn('[Offscreen] Exception sending stats:', e);
       }
     }, 500);
   }
@@ -546,46 +635,146 @@ class OffscreenRecorder {
   async stopRecording() {
     if (this.isStopping) return { success: true };
     this.isStopping = true;
-    if (this.timer) { clearInterval(this.timer); this.timer = null; }
-    this.stopStats();
-    if (!this.recorder || this.recorder.state === 'inactive') {
-      this.isStopping = false;
-      return { success: false };
+    
+    console.log('🛑 [Offscreen] Stopping recording...');
+    
+    if (this.timer) { 
+      clearInterval(this.timer); 
+      this.timer = null; 
     }
-    try { this.recorder.requestData(); await delay(120); } catch {}
-    this.recorder.stop();
+    
+    this.stopStats();
+    
+    if (this.isGifMode) {
+      if (this.gifEncoder && this.frameCount > 0) {
+        console.log('🎨 [Offscreen] Starting GIF encoding with', this.frameCount, 'frames');
+        this.isEncodingGif = true;
+        this.gifEncoder.render();
+      } else {
+        this.isStopping = false;
+        await this.cleanup();
+        return { success: false, error: 'No frames captured' };
+      }
+    } else {
+      if (!this.recorder || this.recorder.state === 'inactive') {
+        this.isStopping = false;
+        return { success: false };
+      }
+      
+      try { 
+        this.recorder.requestData(); 
+        await delay(120); 
+      } catch {}
+      
+      this.recorder.stop();
+    }
+    
     return { success: true };
   }
 
   pauseRecording() {
+    if (this.isGifMode) {
+      // GIF는 일시정지 지원 안함
+      return { success: false, error: 'Pause not supported for GIF' };
+    }
+    
     if (this.recorder?.state === 'recording') {
       this.recorder.pause();
       this.pausedAt = Date.now();
+      console.log('⏸️ [Offscreen] Recording paused');
       return { success: true };
     }
     return { success: false };
   }
 
   resumeRecording() {
+    if (this.isGifMode) {
+      return { success: false, error: 'Resume not supported for GIF' };
+    }
+    
     if (this.recorder?.state === 'paused') {
       this.recorder.resume();
       if (this.pausedAt) {
         this.accumulatedPause += Date.now() - this.pausedAt;
         this.pausedAt = 0;
       }
+      console.log('▶️ [Offscreen] Recording resumed');
       return { success: true };
     }
     return { success: false };
   }
 
   async cancelRecording() {
-    if (this.recorder?.state !== 'inactive') this.recorder.stop();
+    console.log('❌ [Offscreen] Recording cancelled');
+    
+    if (this.isGifMode) {
+      if (this.gifEncoder) {
+        try {
+          this.gifEncoder.abort();
+        } catch (e) {
+          console.warn('[Offscreen] GIF encoder abort failed:', e);
+        }
+        this.gifEncoder = null;
+      }
+    } else {
+      if (this.recorder?.state !== 'inactive') {
+        try {
+          this.recorder.stop();
+        } catch (e) {
+          console.warn('[Offscreen] Recorder stop failed:', e);
+        }
+      }
+    }
+    
     this.stopStats();
     await this.cleanup();
     return { success: true };
   }
 
+  async handleGifFinished(blob) {
+    console.log('💾 [Offscreen] GIF ready:', {
+      size: (blob.size / 1024 / 1024).toFixed(2) + ' MB',
+      frames: this.frameCount
+    });
+
+    this.totalSize = blob.size;
+
+    // 파일 다운로드
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = generateFilename('gif');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    // 완료 메시지 전송
+    try {
+      chrome.runtime.sendMessage({
+        type: 'recording-finished',
+        data: { 
+          format: 'GIF', 
+          size: this.totalSize, 
+          filename: generateFilename('gif') 
+        }
+      });
+    } catch (e) {
+      console.warn('[Offscreen] Failed to send recording-finished:', e);
+    }
+
+    await this.cleanup();
+    this.isStopping = false;
+    
+    console.log('✅ [Offscreen] GIF recording finalized successfully');
+  }
+
   async finalize() {
+    if (this.isGifMode) {
+      // GIF는 handleGifFinished에서 처리
+      return;
+    }
+    
     if (!this.chunks.length || this.totalSize < 10) {
       console.warn('⚠️ [Offscreen] No data to save');
       await this.cleanup();
@@ -606,9 +795,6 @@ class OffscreenRecorder {
       type: blob.type
     });
 
-    // Offscreen에서는 storage에 직접 접근하지 않음
-    // Service Worker를 통해 처리됨
-
     // 파일 다운로드
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -623,10 +809,10 @@ class OffscreenRecorder {
     try {
       chrome.runtime.sendMessage({
         type: 'recording-finished',
-        data: {
-          format: 'WebM',
-          size: this.totalSize,
-          filename: generateFilename('webm')
+        data: { 
+          format: 'WebM', 
+          size: this.totalSize, 
+          filename: generateFilename('webm') 
         }
       });
     } catch (e) {
@@ -642,35 +828,44 @@ class OffscreenRecorder {
   async cleanup() {
     console.log('🧹 [Offscreen] Cleanup started');
     
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
+    if (this.timer) { 
+      clearInterval(this.timer); 
+      this.timer = null; 
+    }
+    
+    if (this.gifEncoder) {
+      try {
+        this.gifEncoder = null;
+      } catch (e) {
+        console.warn('[Offscreen] GIF encoder cleanup failed:', e);
+      }
     }
     
     if (this.recorder) {
-      try {
-        if (this.recorder.state !== 'inactive') this.recorder.stop();
+      try { 
+        if (this.recorder.state !== 'inactive') this.recorder.stop(); 
       } catch {}
       this.recorder = null;
     }
     
     if (this.mediaStream) {
-      try {
-        this.mediaStream.getTracks().forEach(t => t.stop());
+      try { 
+        this.mediaStream.getTracks().forEach(t => t.stop()); 
       } catch {}
       this.mediaStream = null;
     }
     
     if (this.video) {
-      try {
-        this.video.pause();
-        this.video.srcObject = null;
+      try { 
+        this.video.pause(); 
+        this.video.srcObject = null; 
       } catch {}
       this.video = null;
     }
     
     this.stopStats();
     this.chunks = [];
+    this.gifFrames = [];
     this.totalSize = 0;
     this.currentRecordingId = null;
     this.currentCrop = null;
@@ -678,14 +873,10 @@ class OffscreenRecorder {
     this.startedAt = 0;
     this.pausedAt = 0;
     this.accumulatedPause = 0;
-    this.calibrated = false;
-    this.calibratedOffsetY = 0;
-    
-    // 줌 상태 초기화
+    this.isGifMode = false;
+    this.isEncodingGif = false;
+    this.gifEncodingProgress = 0;
     this.zoomState.isZooming = false;
-    this.zoomState.targetArea = null;
-    this.zoomState.startTime = 0;
-    this.zoomState.easeProgress = 0;
     
     console.log('✅ [Offscreen] Cleanup completed');
   }
