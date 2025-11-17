@@ -1,8 +1,11 @@
 import { MESSAGE_TYPES, DEFAULT_PREFERENCES } from '../utils/constants.js';
-import { storageManager } from '../utils/storage.js';
 import { generateFilename } from '../utils/video-utils.js';
 
-const REC_MIME = MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? 'video/webm;codecs=vp8,opus' : 'video/webm';
+const REC_MIME = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+  ? 'video/webm;codecs=vp9,opus'
+  : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+  ? 'video/webm;codecs=vp8,opus'
+  : 'video/webm';
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
@@ -28,10 +31,21 @@ class OffscreenRecorder {
     this.calibrated = false;
     this.calibratedOffsetY = 0;
 
+    // 기본 설정 (DEFAULT_PREFERENCES에서 가져옴)
     this.state = {
-      fps: 30,
-      quality: 'HIGH',
-      includeAudio: true
+      fps: DEFAULT_PREFERENCES.fps || 30,
+      quality: DEFAULT_PREFERENCES.quality || 'HIGH',
+      includeAudio: DEFAULT_PREFERENCES.includeAudio !== false
+    };
+
+    // 줌 관련 상태 추가
+    this.zoomState = {
+      isZooming: false,
+      targetArea: null,
+      startTime: 0,
+      duration: 800,
+      scale: 1.5,
+      easeProgress: 0
     };
 
     this.setupMessageHandlers();
@@ -40,7 +54,7 @@ class OffscreenRecorder {
 
   async init() {
     try {
-      await storageManager.init();
+      console.log('✅ [Offscreen] Initialized with default settings:', this.state);
       await this.notifyReady();
     } catch (e) {
       console.error('[Offscreen] Init error:', e);
@@ -56,6 +70,7 @@ class OffscreenRecorder {
             else resolve(r);
           });
         });
+        console.log('✅ [Offscreen] Ready notification sent');
         break;
       } catch (e) {
         if (i < 4) await delay(200 * (i + 1));
@@ -103,21 +118,78 @@ class OffscreenRecorder {
       case MESSAGE_TYPES.RESUME_RECORDING: return this.resumeRecording();
       case MESSAGE_TYPES.CANCEL_RECORDING: return this.cancelRecording();
       case MESSAGE_TYPES.UPDATE_PREFS: this.updatePrefs(message.data); return { success: true };
+      case MESSAGE_TYPES.ELEMENT_CLICKED_ZOOM: return this.handleElementZoom(message.data);
       default: return { success: true };
     }
   }
 
   updatePrefs(prefs) {
     if (!prefs) return;
-    this.state.fps = prefs.fps || 30;
-    this.state.quality = prefs.quality || 'HIGH';
-    this.state.includeAudio = prefs.includeAudio !== false;
+    
+    const oldState = { ...this.state };
+    
+    if (typeof prefs.fps !== 'undefined') {
+      this.state.fps = clamp(parseInt(prefs.fps, 10), 10, 60);
+    }
+    
+    if (typeof prefs.quality !== 'undefined') {
+      this.state.quality = prefs.quality;
+    }
+    
+    if (typeof prefs.includeAudio !== 'undefined') {
+      this.state.includeAudio = prefs.includeAudio;
+    }
+    
+    console.log('🔧 [Offscreen] Preferences updated:', {
+      old: oldState,
+      new: this.state
+    });
+    
+    this.updateZoomPreferences(prefs);
+  }
+
+  updateZoomPreferences(prefs) {
+    if (!prefs) return;
+    
+    if (typeof prefs.elementZoomScale !== 'undefined') {
+      this.zoomState.scale = parseFloat(prefs.elementZoomScale) || 1.5;
+    }
+    
+    if (typeof prefs.elementZoomDuration !== 'undefined') {
+      this.zoomState.duration = parseInt(prefs.elementZoomDuration, 10) || 800;
+    }
+  }
+
+  handleElementZoom(data) {
+    if (!data?.zoomArea) return { success: false };
+    
+    this.zoomState.isZooming = true;
+    this.zoomState.targetArea = data.zoomArea;
+    this.zoomState.startTime = data.timestamp || Date.now();
+    this.zoomState.easeProgress = 0;
+    
+    console.log('🔍 [Zoom] Started:', {
+      area: this.zoomState.targetArea,
+      scale: this.zoomState.scale,
+      duration: this.zoomState.duration
+    });
+    
+    return { success: true };
   }
 
   async startRecording({ streamId, cropAreaCSS, view, preferences }) {
     try {
+      // 설정 먼저 업데이트
       this.updatePrefs(preferences || {});
+      
+      console.log('🎬 [Offscreen] Starting recording with settings:', {
+        fps: this.state.fps,
+        quality: this.state.quality,
+        bitrate: this.qualityToBitrate(this.state.quality),
+        includeAudio: this.state.includeAudio
+      });
 
+      // 미디어 스트림 가져오기
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: this.state.includeAudio ? {
           mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId }
@@ -138,7 +210,7 @@ class OffscreenRecorder {
       const vW = this.video.videoWidth;
       const vH = this.video.videoHeight;
 
-      console.log('[Offscreen] Recording started:', vW + 'x' + vH);
+      console.log('📹 [Offscreen] Video stream ready:', vW + 'x' + vH);
 
       let crop;
       if (cropAreaCSS && view) {
@@ -184,6 +256,9 @@ class OffscreenRecorder {
         throw new Error('Failed to get canvas context');
       }
 
+      console.log('🎨 [Offscreen] Canvas ready:', crop.width + 'x' + crop.height);
+
+      // 녹화 시작
       await this.startVideoRecording();
 
       this.startedAt = Date.now();
@@ -191,9 +266,12 @@ class OffscreenRecorder {
       this.accumulatedPause = 0;
       this.startStats();
 
-      const fps = clamp(this.state.fps, 10, 60);
+      // FPS에 맞춰 프레임 렌더링
+      const fps = this.state.fps;
       if (this.timer) clearInterval(this.timer);
       this.timer = setInterval(() => this.renderFrame(), Math.floor(1000 / fps));
+
+      console.log('✅ [Offscreen] Recording started with FPS:', fps);
 
       return { success: true };
       
@@ -206,21 +284,33 @@ class OffscreenRecorder {
 
   async startVideoRecording() {
     try {
-      const fps = clamp(this.state.fps, 10, 60);
+      const fps = this.state.fps;
       const stream = this.canvas.captureStream(fps);
       
+      console.log('🎥 [Offscreen] Canvas stream created with FPS:', fps);
+      
+      // 오디오 트랙 추가
       const audio = this.mediaStream.getAudioTracks()[0];
-      if (audio) {
+      if (audio && this.state.includeAudio) {
         try {
           stream.addTrack(audio);
+          console.log('🔊 [Offscreen] Audio track added');
         } catch (e) {
-          console.warn('Failed to add audio:', e);
+          console.warn('⚠️ [Offscreen] Failed to add audio:', e);
         }
       }
       
+      const bitrate = this.qualityToBitrate(this.state.quality);
+      
+      console.log('⚙️ [Offscreen] MediaRecorder settings:', {
+        mimeType: REC_MIME,
+        videoBitsPerSecond: bitrate,
+        audioBitsPerSecond: 128000
+      });
+      
       this.recorder = new MediaRecorder(stream, {
         mimeType: REC_MIME,
-        videoBitsPerSecond: this.qualityToBitrate(this.state.quality),
+        videoBitsPerSecond: bitrate,
         audioBitsPerSecond: 128000
       });
 
@@ -261,15 +351,84 @@ class OffscreenRecorder {
       const c = this.currentCrop;
 
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      this.ctx.drawImage(
-        this.video,
-        c.x, c.y, c.width, c.height,
-        0, 0, this.canvas.width, this.canvas.height
-      );
+
+      // 줌 효과 적용
+      if (this.zoomState.isZooming) {
+        this.renderWithZoom(c);
+      } else {
+        // 일반 렌더링
+        this.ctx.drawImage(
+          this.video,
+          c.x, c.y, c.width, c.height,
+          0, 0, this.canvas.width, this.canvas.height
+        );
+      }
 
       this.frameCount++;
     } catch (e) {
       console.error('[renderFrame] Error:', e);
+    }
+  }
+
+  renderWithZoom(cropArea) {
+    const now = Date.now();
+    const elapsed = now - this.zoomState.startTime;
+    const progress = Math.min(elapsed / this.zoomState.duration, 1);
+    
+    // Ease-in-out 함수
+    const easeInOutCubic = (t) => {
+      return t < 0.5
+        ? 4 * t * t * t
+        : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    };
+    
+    const easedProgress = easeInOutCubic(progress);
+    
+    // 줌 단계 계산 (0 → scale → 0)
+    let currentScale;
+    if (progress < 0.5) {
+      // 줌 인 (0 → 1)
+      currentScale = 1 + (this.zoomState.scale - 1) * (easedProgress * 2);
+    } else {
+      // 줌 아웃 (1 → 0)
+      currentScale = 1 + (this.zoomState.scale - 1) * (2 - easedProgress * 2);
+    }
+    
+    const zoomArea = this.zoomState.targetArea;
+    
+    // 줌 중심점 계산 (crop area 내의 상대 좌표)
+    const zoomCenterX = zoomArea.x + zoomArea.width / 2;
+    const zoomCenterY = zoomArea.y + zoomArea.height / 2;
+    
+    // 줌 적용된 영역 계산
+    const scaledWidth = cropArea.width / currentScale;
+    const scaledHeight = cropArea.height / currentScale;
+    
+    // 줌 중심을 기준으로 새로운 crop 영역 계산
+    const zoomedX = cropArea.x + zoomCenterX - scaledWidth / 2;
+    const zoomedY = cropArea.y + zoomCenterY - scaledHeight / 2;
+    
+    // 경계 체크 (최적화)
+    const maxX = cropArea.x + cropArea.width - scaledWidth;
+    const maxY = cropArea.y + cropArea.height - scaledHeight;
+    const finalX = Math.max(cropArea.x, Math.min(zoomedX, maxX));
+    const finalY = Math.max(cropArea.y, Math.min(zoomedY, maxY));
+    
+    // 성능 최적화: 이미지 품질 설정
+    this.ctx.imageSmoothingEnabled = true;
+    this.ctx.imageSmoothingQuality = 'high';
+    
+    // 줌 효과 렌더링
+    this.ctx.drawImage(
+      this.video,
+      finalX, finalY, scaledWidth, scaledHeight,
+      0, 0, this.canvas.width, this.canvas.height
+    );
+    
+    // 줌 완료 체크
+    if (progress >= 1) {
+      this.zoomState.isZooming = false;
+      console.log('✅ [Zoom] Completed');
     }
   }
 
@@ -326,12 +485,15 @@ class OffscreenRecorder {
 
 
   qualityToBitrate(q) {
-    switch (q) {
-      case 'LOW': return 2000000;
-      case 'MEDIUM': return 5000000;
-      case 'ULTRA': return 15000000;
-      default: return 8000000;
-    }
+    const bitrateMap = {
+      LOW: 2000000,      // 2 Mbps
+      MEDIUM: 5000000,   // 5 Mbps
+      HIGH: 8000000,     // 8 Mbps
+      ULTRA: 15000000    // 15 Mbps
+    };
+    const bitrate = bitrateMap[q] || bitrateMap.HIGH;
+    console.log(`📊 [Offscreen] Quality ${q} → Bitrate ${bitrate / 1000000} Mbps`);
+    return bitrate;
   }
 
   async waitForFirstFrame(video) {
@@ -425,24 +587,29 @@ class OffscreenRecorder {
 
   async finalize() {
     if (!this.chunks.length || this.totalSize < 10) {
+      console.warn('⚠️ [Offscreen] No data to save');
       await this.cleanup();
       this.isStopping = false;
+      
+      try {
+        chrome.runtime.sendMessage({ type: 'cleanup-recording-ui' });
+      } catch {}
+      
       return;
     }
 
     const blob = new Blob(this.chunks, { type: this.chunks[0].type || REC_MIME });
+    
+    console.log('💾 [Offscreen] Finalizing recording:', {
+      size: (this.totalSize / 1024 / 1024).toFixed(2) + ' MB',
+      chunks: this.chunks.length,
+      type: blob.type
+    });
 
-    try {
-      await storageManager.saveRecording({
-        id: this.currentRecordingId,
-        timestamp: Date.now(),
-        duration: 0,
-        size: this.totalSize,
-        format: blob.type,
-        filename: generateFilename('webm')
-      });
-    } catch {}
+    // Offscreen에서는 storage에 직접 접근하지 않음
+    // Service Worker를 통해 처리됨
 
+    // 파일 다운로드
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -452,31 +619,56 @@ class OffscreenRecorder {
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
 
+    // 완료 메시지 전송
     try {
       chrome.runtime.sendMessage({
         type: 'recording-finished',
-        data: { format: 'WebM', size: this.totalSize, filename: generateFilename('webm') }
+        data: {
+          format: 'WebM',
+          size: this.totalSize,
+          filename: generateFilename('webm')
+        }
       });
-    } catch {}
+    } catch (e) {
+      console.warn('[Offscreen] Failed to send recording-finished:', e);
+    }
 
     await this.cleanup();
     this.isStopping = false;
+    
+    console.log('✅ [Offscreen] Recording finalized successfully');
   }
 
   async cleanup() {
-    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    console.log('🧹 [Offscreen] Cleanup started');
+    
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    
     if (this.recorder) {
-      try { if (this.recorder.state !== 'inactive') this.recorder.stop(); } catch {}
+      try {
+        if (this.recorder.state !== 'inactive') this.recorder.stop();
+      } catch {}
       this.recorder = null;
     }
+    
     if (this.mediaStream) {
-      try { this.mediaStream.getTracks().forEach(t => t.stop()); } catch {}
+      try {
+        this.mediaStream.getTracks().forEach(t => t.stop());
+      } catch {}
       this.mediaStream = null;
     }
+    
     if (this.video) {
-      try { this.video.pause(); this.video.srcObject = null; } catch {}
+      try {
+        this.video.pause();
+        this.video.srcObject = null;
+      } catch {}
       this.video = null;
     }
+    
     this.stopStats();
     this.chunks = [];
     this.totalSize = 0;
@@ -488,6 +680,14 @@ class OffscreenRecorder {
     this.accumulatedPause = 0;
     this.calibrated = false;
     this.calibratedOffsetY = 0;
+    
+    // 줌 상태 초기화
+    this.zoomState.isZooming = false;
+    this.zoomState.targetArea = null;
+    this.zoomState.startTime = 0;
+    this.zoomState.easeProgress = 0;
+    
+    console.log('✅ [Offscreen] Cleanup completed');
   }
 }
 

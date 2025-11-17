@@ -397,8 +397,29 @@ class ServiceWorkerMain {
   }
 
   async showDockWithRetry() {
-    if (!this.state.currentTabId) return;
-    await messageQueue.enqueue(this.state.currentTabId, { type: MESSAGE_TYPES.SHOW_DOCK });
+    if (!this.state.currentTabId) {
+      console.warn('[ServiceWorker] No currentTabId for showing dock');
+      return;
+    }
+    
+    console.log('📤 [ServiceWorker] Sending SHOW_DOCK to tab:', this.state.currentTabId);
+    
+    // 여러 번 시도
+    for (let i = 0; i < 3; i++) {
+      const result = await messageQueue.enqueue(this.state.currentTabId, {
+        type: MESSAGE_TYPES.SHOW_DOCK
+      });
+      
+      if (result.success) {
+        console.log('✅ [ServiceWorker] SHOW_DOCK sent successfully');
+        return;
+      }
+      
+      console.warn(`⚠️ [ServiceWorker] SHOW_DOCK attempt ${i+1} failed, retrying...`);
+      await new Promise(r => setTimeout(r, 300));
+    }
+    
+    console.error('❌ [ServiceWorker] Failed to show dock after retries');
   }
 
   async waitOffscreenReady(timeoutMs) {
@@ -451,12 +472,34 @@ class ServiceWorkerMain {
   }
 
   async stopCmd() {
-    await SafeChrome.sendMessage({ type: MESSAGE_TYPES.STOP_RECORDING, target: 'offscreen' });
+    console.log('🛑 [ServiceWorker] stopCmd called');
+    
+    // Offscreen에 중지 신호 전송
+    await SafeChrome.sendMessage({
+      type: MESSAGE_TYPES.STOP_RECORDING,
+      target: 'offscreen'
+    });
+    
+    // 상태 업데이트
     this.state.isRecording = false;
     this.state.isPaused = false;
+    
+    // Content script에 Dock 숨김 신호 전송
     if (this.state.currentTabId) {
-      await SafeChrome.sendTabMessage(this.state.currentTabId, { type: MESSAGE_TYPES.HIDE_DOCK });
+      console.log('📤 [ServiceWorker] Sending HIDE_DOCK to tab:', this.state.currentTabId);
+      
+      await SafeChrome.sendTabMessage(this.state.currentTabId, {
+        type: MESSAGE_TYPES.HIDE_DOCK
+      });
+      
+      // 추가로 cleanup 신호도 전송 (안전장치)
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      await SafeChrome.sendTabMessage(this.state.currentTabId, {
+        type: 'cleanup-recording-ui'
+      });
     }
+    
     return { success: true };
   }
 
@@ -464,23 +507,45 @@ class ServiceWorkerMain {
     switch (command) {
       case 'pause':
         if (this.state.isPaused) {
-          await SafeChrome.sendMessage({ type: MESSAGE_TYPES.RESUME_RECORDING, target: 'offscreen' });
+          await SafeChrome.sendMessage({
+            type: MESSAGE_TYPES.RESUME_RECORDING,
+            target: 'offscreen'
+          });
           this.state.isPaused = false;
         } else {
-          await SafeChrome.sendMessage({ type: MESSAGE_TYPES.PAUSE_RECORDING, target: 'offscreen' });
+          await SafeChrome.sendMessage({
+            type: MESSAGE_TYPES.PAUSE_RECORDING,
+            target: 'offscreen'
+          });
           this.state.isPaused = true;
         }
         return { success: true };
+        
       case 'stop':
         return this.stopCmd();
+        
       case 'cancel':
-        await SafeChrome.sendMessage({ type: MESSAGE_TYPES.CANCEL_RECORDING, target: 'offscreen' });
+        await SafeChrome.sendMessage({
+          type: MESSAGE_TYPES.CANCEL_RECORDING,
+          target: 'offscreen'
+        });
+        
         this.state.isRecording = false;
         this.state.isPaused = false;
+        
         if (this.state.currentTabId) {
-          await SafeChrome.sendTabMessage(this.state.currentTabId, { type: MESSAGE_TYPES.HIDE_DOCK });
+          await SafeChrome.sendTabMessage(this.state.currentTabId, {
+            type: MESSAGE_TYPES.HIDE_DOCK
+          });
+          
+          // Cleanup 신호 전송
+          await SafeChrome.sendTabMessage(this.state.currentTabId, {
+            type: 'cleanup-recording-ui'
+          });
         }
+        
         return { success: true };
+        
       default:
         return { success: false, error: 'Unknown command' };
     }

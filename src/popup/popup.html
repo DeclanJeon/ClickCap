@@ -37,7 +37,7 @@
             <input type="radio" name="mode" value="area">
             <div class="mode-card">
               <div class="mode-label">영역 선택</div>
-              <div class="mode-description">드래그로 선택한 영역만 녹화합니다</div>
+              <div class="mode-description">원하는 영역만 선택하여 녹화합니다</div>
             </div>
           </label>
         </div>
@@ -69,31 +69,8 @@
         </div>
         <div class="setting-group checkbox-group">
           <label>
-            <input type="checkbox" id="clickElementZoom" checked>
-            <span>클릭 시 요소 확대</span>
-          </label>
-        </div>
-        <div class="setting-group">
-          <label for="elementZoomScale">확대 배율</label>
-          <select id="elementZoomScale">
-            <option value="1.2">1.2배</option>
-            <option value="1.5" selected>1.5배</option>
-            <option value="2.0">2.0배</option>
-          </select>
-        </div>
-        <div class="setting-group">
-          <label for="elementZoomDuration">확대 지속 시간</label>
-          <select id="elementZoomDuration">
-            <option value="400">0.4초</option>
-            <option value="600">0.6초</option>
-            <option value="800" selected>0.8초</option>
-            <option value="1000">1.0초</option>
-          </select>
-        </div>
-        <div class="setting-group checkbox-group">
-          <label>
             <input type="checkbox" id="showDock" checked>
-            <span>화면에 녹화 도구 표시</span>
+            <span>녹화 중 컨트롤 표시</span>
           </label>
         </div>
       </section>
@@ -102,14 +79,20 @@
           <span class="btn-text">녹화 시작</span>
         </button>
         <button id="stopBtn" class="btn btn-danger hidden">
-          <span class="btn-text">녹화 종료</span>
+          <span class="btn-text">녹화 중지</span>
         </button>
       </section>
     </main>
     <footer>
       <div class="shortcuts">
-        <div class="shortcut"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>R</kbd><span> 시작 / 종료</span></div>
-        <div class="shortcut"><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd><span> 일시 정지 / 재개</span></div>
+        <div class="shortcut">
+          <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>R</kbd>
+          <span>녹화 시작 / 중지</span>
+        </div>
+        <div class="shortcut">
+          <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd>
+          <span>녹화 일시정지 / 재개</span>
+        </div>
       </div>
     </footer>
   </div>

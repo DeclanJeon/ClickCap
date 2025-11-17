@@ -11,10 +11,7 @@ class PopupMain {
       quality: document.getElementById('quality'),
       fps: document.getElementById('fps'),
       includeAudio: document.getElementById('includeAudio'),
-      showDock: document.getElementById('showDock'),
-      clickElementZoom: document.getElementById('clickElementZoom'),
-      elementZoomScale: document.getElementById('elementZoomScale'),
-      elementZoomDuration: document.getElementById('elementZoomDuration')
+      showDock: document.getElementById('showDock')
     };
 
     this.startBtn.addEventListener('click', () => this.start());
@@ -46,9 +43,6 @@ class PopupMain {
     this.controls.fps.value = String(p.fps || 30);
     this.controls.includeAudio.checked = !!p.includeAudio;
     this.controls.showDock.checked = p.showDock !== false;
-    this.controls.clickElementZoom.checked = !!p.clickElementZoomEnabled;
-    this.controls.elementZoomScale.value = String(p.elementZoomScale || 1.5);
-    this.controls.elementZoomDuration.value = String(p.elementZoomDuration || 800);
   }
 
   async onPrefChanged() {
@@ -57,10 +51,7 @@ class PopupMain {
       quality: this.controls.quality.value,
       fps: parseInt(this.controls.fps.value, 10),
       includeAudio: this.controls.includeAudio.checked,
-      showDock: this.controls.showDock.checked,
-      clickElementZoomEnabled: this.controls.clickElementZoom.checked,
-      elementZoomScale: parseFloat(this.controls.elementZoomScale.value),
-      elementZoomDuration: parseInt(this.controls.elementZoomDuration.value, 10)
+      showDock: this.controls.showDock.checked
     };
 
     await storageManager.saveChromeStorage(STORAGE_KEYS.USER_PREFERENCES, this.prefs);
@@ -101,7 +92,7 @@ class PopupMain {
     try {
       const res = await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error('녹화 시작 타임아웃 (10초)'));
+          reject(new Error('녹화 시작 시간 초과 (10초)'));
         }, 10000);
 
         chrome.runtime.sendMessage({
@@ -118,7 +109,7 @@ class PopupMain {
       });
 
       if (!res?.success) {
-        throw new Error(res?.error || '알 수 없는 오류');
+        throw new Error(res?.error || '녹화 시작 실패');
       }
 
       this.startBtn.classList.add('hidden');
@@ -144,12 +135,12 @@ class PopupMain {
       });
 
       if (!res?.success) {
-        alert('녹화 종료 실패: ' + (res?.error || '알 수 없는 오류'));
+        alert('녹화 중지 실패: ' + (res?.error || '알 수 없는 오류'));
       } else {
-        alert('녹화가 종료되었습니다. 파일이 곧 다운로드됩니다.');
+        alert('녹화가 완료되었습니다. 파일이 다운로드됩니다.');
       }
     } catch (e) {
-      alert('녹화 종료 실패: ' + e.message);
+      alert('녹화 중지 실패: ' + e.message);
     } finally {
       this.startBtn.classList.remove('hidden');
       this.stopBtn.classList.add('hidden');

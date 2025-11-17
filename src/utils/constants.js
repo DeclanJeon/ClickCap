@@ -17,8 +17,7 @@ export const MESSAGE_TYPES = {
   UPDATE_PREFS: 'update-prefs',
   VIEWPORT_INFO: 'viewport-info',
   ELEMENT_CLICKED_ZOOM: 'element-clicked-zoom',
-  TOGGLE_ELEMENT_ZOOM: 'toggle-element-zoom',
-  TOGGLE_LASER: 'toggle-laser'
+  TOGGLE_ELEMENT_ZOOM: 'toggle-element-zoom'
 };
 
 export const STORAGE_KEYS = {
