@@ -39,11 +39,12 @@ export class AreaSelector {
 
       .selection-box {
         position: absolute;
-        border: 3px solid #ff0000;
+        border: 3px solid #ff0000;  /* ⚠️ 이 값이 BORDER_OFFSET과 일치해야 함 */
         background: rgba(255, 0, 0, 0.1);
         pointer-events: none;
         display: none;
         box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+        box-sizing: border-box;
       }
 
       .instructions {
@@ -95,9 +96,9 @@ export class AreaSelector {
     this.instructions = document.createElement('div');
     this.instructions.className = 'instructions';
     this.instructions.innerHTML = `
-      <h3>Select Recording Area</h3>
-      <p>Click and drag to select the area you want to record</p>
-      <p>Press <strong>ESC</strong> to cancel</p>
+      <h3>녹화 영역 선택</h3>
+      <p>마우스로 드래그하여 영역을 선택하세요</p>
+      <p><strong>ESC</strong> 키로 취소</p>
     `;
 
     this.coordinates = document.createElement('div');
@@ -167,28 +168,21 @@ export class AreaSelector {
     const height = Math.abs(this.currentY - this.startY);
 
     if (width > 50 && height > 50) {
-      // ✅ DPR 적용
-      const dpr = window.devicePixelRatio || 1;
-
-      // ✅ 테두리 제외를 위한 크롭 영역 조정
-      const BORDER_WIDTH = 3;  // 테두리 두께
-      const SAFETY_MARGIN = 5;  // 추가 여유 공간
-      const TOTAL_OFFSET = BORDER_WIDTH + SAFETY_MARGIN;
-
-      const cropArea = {
-        x: Math.round(left + TOTAL_OFFSET),
-        y: Math.round(top + TOTAL_OFFSET),
-        width: Math.round(width - TOTAL_OFFSET * 2),
-        height: Math.round(height - TOTAL_OFFSET * 2),
-        dpr: dpr  // ✅ DPR 정보 포함
+      // ✅ Border 두께 (CSS에서 정의한 값)
+      const BORDER_WIDTH = 3;
+      
+      console.log('🎯 [AreaSelector] Raw selection (including border):', { left, top, width, height });
+      
+      // ✅ Border 내부 영역만 선택 (외곽선 제외)
+      const innerArea = {
+        x: left + BORDER_WIDTH,
+        y: top + BORDER_WIDTH,
+        width: width - (BORDER_WIDTH * 2),
+        height: height - (BORDER_WIDTH * 2)
       };
 
-      console.log('[AreaSelector] User selected area (with border offset):');
-      console.log('  Original:', { x: left, y: top, width, height });
-      console.log('  Adjusted:', cropArea);
-      console.log('  Offset applied:', TOTAL_OFFSET, 'px on all sides');
+      console.log('📦 [AreaSelector] Inner area (excluding border):', innerArea);
 
-      // ✅ View Context 수집
       const vv = window.visualViewport || null;
       const viewContext = {
         dpr: window.devicePixelRatio || 1,
@@ -203,7 +197,10 @@ export class AreaSelector {
         vvHeight: vv ? vv.height : window.innerHeight,
       };
 
-      this.onAreaSelected({ cropArea, view: viewContext });
+      console.log('🌐 [AreaSelector] View context:', viewContext);
+
+      // ✅ Border 제외한 내부 영역 전달
+      this.onAreaSelected({ cropArea: innerArea, view: viewContext });
 
       this.overlay.style.background = 'transparent';
       this.overlay.style.pointerEvents = 'none';

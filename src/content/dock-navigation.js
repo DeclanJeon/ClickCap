@@ -277,7 +277,9 @@ export class DockNavigation {
   }
 
   handleLaser() {
-    chrome.runtime.sendMessage({ type: MESSAGE_TYPES.TOGGLE_LASER });
+    // TODO: implement laser toggle with offscreen document
+    // Laser feature is not implemented yet
+    console.warn('[Dock] Laser toggle not implemented yet');
   }
 
   handleCancel() {

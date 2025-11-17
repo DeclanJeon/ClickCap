@@ -1,7 +1,7 @@
 {
   "name": "Advanced Screen Recorder",
-  "description": "Professional screen recording with area selection and laser pointer",
-  "version": "2.2.3",
+  "description": "Simple and stable screen recorder with area selection and click zoom",
+  "version": "3.0.0",
   "manifest_version": 3,
   "minimum_chrome_version": "116",
   "icons": {
@@ -37,7 +37,8 @@
     {
       "matches": ["<all_urls>"],
       "js": ["src/content/content-script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "commands": {
@@ -54,21 +55,12 @@
         "mac": "Command+Shift+P"
       },
       "description": "Pause/Resume recording"
-    },
-    "toggle-laser": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+L",
-        "mac": "Command+Shift+L"
-      },
-      "description": "Toggle laser pointer"
     }
   },
   "web_accessible_resources": [
     {
       "resources": [
-        "src/offscreen/offscreen.html",
-        "src/vendor/gif.worker.js",
-        "src/vendor/gif.js"
+        "src/offscreen/offscreen.html"
       ],
       "matches": ["<all_urls>"]
     }
