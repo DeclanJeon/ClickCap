@@ -1,21 +1,38 @@
 {
-  "name": "advanced-screen-recorder",
-  "version": "2.0.0",
-  "description": "Professional Chrome extension for screen recording",
+  "name": "clickcap",
+  "version": "1.0.0",
+  "description": "Smart screen recording with automatic click zoom and GIF export",
+  "main": "src/background/service-worker.js",
   "scripts": {
     "build": "echo 'No build step required for vanilla JS'",
     "lint": "eslint src/**/*.js",
-    "format": "prettier --write src/**/*.{js,css,html}"
+    "format": "prettier --write src/**/*.{js,css,html}",
+    "test": "echo 'Tests not implemented yet'"
   },
   "keywords": [
-    "chrome-extension",
     "screen-recorder",
-    "video-capture"
+    "chrome-extension",
+    "gif-recorder",
+    "click-zoom",
+    "tutorial-recorder",
+    "screen-capture"
   ],
   "author": "Declan",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DeclanJeon/ClickCap.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DeclanJeon/ClickCap.git/issues"
+  },
+  "homepage": "https://github.com/DeclanJeon/ClickCap.git#readme",
   "devDependencies": {
     "eslint": "^8.50.0",
     "prettier": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   }
 }
+

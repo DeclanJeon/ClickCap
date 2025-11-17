@@ -1,9 +1,12 @@
 {
-  "name": "Advanced Screen Recorder",
-  "description": "Simple and stable screen recorder with area selection and click zoom",
-  "version": "3.1.0",
+  "name": "ClickCap - Smart Screen Recorder",
+  "short_name": "ClickCap",
+  "description": "Smart screen recording with automatic click zoom and GIF export. Perfect for tutorials and demos.",
+  "version": "1.0.0",
   "manifest_version": 3,
   "minimum_chrome_version": "116",
+  "author": "Declan",
+  "homepage_url": "https://github.com/DeclanJeon/ClickCap.git",
   "icons": {
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
@@ -16,7 +19,7 @@
       "128": "icons/icon-128.png"
     },
     "default_popup": "src/popup/popup.html",
-    "default_title": "Advanced Screen Recorder"
+    "default_title": "ClickCap - Smart Screen Recorder"
   },
   "background": {
     "service_worker": "src/background/service-worker.js",
@@ -71,3 +74,4 @@
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self'"
   }
 }
+
