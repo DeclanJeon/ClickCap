@@ -2,7 +2,7 @@
   "name": "ClickCap - Smart Screen Recorder",
   "short_name": "ClickCap",
   "description": "Smart screen recording with automatic click zoom and GIF export. Perfect for tutorials and demos.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "manifest_version": 3,
   "minimum_chrome_version": "116",
   "author": "Declan",
