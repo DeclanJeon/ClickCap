@@ -221,6 +221,8 @@ class ServiceWorkerMain {
         return this.startCmd(message.data);
       case MESSAGE_TYPES.AREA_SELECTED:
         return this.areaSelected(message.data);
+      case 'start-area-recording': // 새로 추가
+        return this.startAreaRecording();
       case MESSAGE_TYPES.OFFSCREEN_READY:
         return { success: true };
       case MESSAGE_TYPES.RECORDING_STATS:
@@ -338,33 +340,56 @@ class ServiceWorkerMain {
     }
 
     if (mode === 'area') {
+      // 지정 영역 모드
       await SafeChrome.sendTabMessage(tab.id, { type: MESSAGE_TYPES.SHOW_AREA_SELECTOR });
       return { success: true };
     }
 
-    const viewRes = await new Promise((resolve) => {
-      const timeout = setTimeout(() => resolve(null), 3000);
-      try {
-        chrome.tabs.sendMessage(tab.id, { type: 'REQUEST_VIEW_CONTEXT' }, (r) => {
-          clearTimeout(timeout);
-          resolve(r);
-        });
-      } catch {
-        clearTimeout(timeout);
-        resolve(null);
-      }
-    });
-
-    const view = viewRes?.data || null;
-    await this.startCapture({ cropArea: null, view }, this.state.preferences);
-
-    if (view?.viewportWidth && view?.viewportHeight && this.state.currentTabId) {
-      await messageQueue.enqueue(this.state.currentTabId, {
-        type: 'set-recording-crop',
-        data: { x: 0, y: 0, width: view.viewportWidth, height: view.viewportHeight, isSelecting: false }
-      });
+    // 전체 화면 녹화 모드
+    console.log(' [ServiceWorker] Starting full screen recording');
+    
+    // view context 가져오기 (안전한 방식으로)
+    let viewRes = null;
+    try {
+      viewRes = await Promise.race([
+        new Promise((resolve) => {
+          chrome.tabs.sendMessage(tab.id, { type: 'REQUEST_VIEW_CONTEXT' }, (r) => {
+            if (chrome.runtime.lastError) {
+              console.warn('[ServiceWorker] View context error:', chrome.runtime.lastError);
+              resolve(null);
+            } else {
+              resolve(r);
+            }
+          });
+        }),
+        new Promise((resolve) => setTimeout(() => resolve(null), 2000))
+      ]);
+    } catch (e) {
+      console.warn('[ServiceWorker] Failed to get view context:', e);
+      viewRes = null;
     }
 
+    // 기본 view 값 설정
+    const view = viewRes?.data || {
+      viewportWidth: window.innerWidth || 1920,
+      viewportHeight: window.innerHeight || 1080,
+      dpr: 1,
+      scrollX: 0,
+      scrollY: 0,
+      vvScale: 1,
+      vvOffsetLeft: 0,
+      vvOffsetTop: 0,
+      vvWidth: window.innerWidth || 1920,
+      vvHeight: window.innerHeight || 1080
+    };
+
+    console.log(' [ServiceWorker] Full screen recording view:', view);
+
+    // cropArea: null로 전체 화면 녹화 시작
+    await this.startCapture({ cropArea: null, view }, this.state.preferences);
+
+    // 전체 화면 녹화에서는 녹화 영역 표시 안 함
+    // Dock만 표시
     if (this.state.preferences.showDock) {
       await this.showDockWithRetry();
     }
@@ -375,6 +400,7 @@ class ServiceWorkerMain {
   async areaSelected({ cropArea, view }) {
     this.state.cropArea = cropArea;
 
+    // 영역 선택 UI 숨기기
     await SafeChrome.sendTabMessage(this.state.currentTabId, {
       type: MESSAGE_TYPES.HIDE_AREA_SELECTOR
     });
@@ -382,44 +408,97 @@ class ServiceWorkerMain {
     const prefs = (await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES))
       || this.state.preferences;
 
-    await messageQueue.enqueue(this.state.currentTabId, {
+    // crop 정보를 content script에 전달하여 녹화 영역 표시
+    const cropResult = await messageQueue.enqueue(this.state.currentTabId, {
       type: 'set-recording-crop',
       data: { ...cropArea, isSelecting: false }
     });
 
-    await this.startCapture({ cropArea, view }, prefs);
+    console.log(' [ServiceWorker] Crop area set result:', cropResult);
 
+    // Dock 표시 (대기 모드)
     if (prefs.showDock) {
-      await this.showDockWithRetry();
+      await this.showDockWithRetry(true); // waitingMode = true
     }
+
+    console.log(' [ServiceWorker] Area selected, waiting for user to start recording');
 
     return { success: true };
   }
 
-  async showDockWithRetry() {
+  async startAreaRecording() {
+    if (!this.state.cropArea) {
+      return { success: false, error: 'No crop area selected' };
+    }
+
+    console.log(' [ServiceWorker] Starting area recording with crop:', this.state.cropArea);
+
+    // view context 가져오기
+    let viewRes = null;
+    try {
+      viewRes = await Promise.race([
+        new Promise((resolve) => {
+          chrome.tabs.sendMessage(this.state.currentTabId, { type: 'REQUEST_VIEW_CONTEXT' }, (r) => {
+            if (chrome.runtime.lastError) {
+              resolve(null);
+            } else {
+              resolve(r);
+            }
+          });
+        }),
+        new Promise((resolve) => setTimeout(() => resolve(null), 2000))
+      ]);
+    } catch (e) {
+      console.warn('[ServiceWorker] Failed to get view context:', e);
+    }
+
+    const view = viewRes?.data || {
+      viewportWidth: window.innerWidth || 1920,
+      viewportHeight: window.innerHeight || 1080,
+      dpr: 1,
+      scrollX: 0,
+      scrollY: 0,
+      vvScale: 1,
+      vvOffsetLeft: 0,
+      vvOffsetTop: 0,
+      vvWidth: window.innerWidth || 1920,
+      vvHeight: window.innerHeight || 1080
+    };
+
+    await this.startCapture({ cropArea: this.state.cropArea, view }, this.state.preferences);
+
+    // 녹화 시작 알림
+    await SafeChrome.sendTabMessage(this.state.currentTabId, {
+      type: 'recording-started'
+    });
+
+    return { success: true };
+  }
+
+  async showDockWithRetry(waitingMode = false) {
     if (!this.state.currentTabId) {
       console.warn('[ServiceWorker] No currentTabId for showing dock');
       return;
     }
     
-    console.log('📤 [ServiceWorker] Sending SHOW_DOCK to tab:', this.state.currentTabId);
+    console.log(' [ServiceWorker] Sending SHOW_DOCK to tab:', this.state.currentTabId, 'waitingMode:', waitingMode);
     
-    // 여러 번 시도
     for (let i = 0; i < 3; i++) {
-      const result = await messageQueue.enqueue(this.state.currentTabId, {
-        type: MESSAGE_TYPES.SHOW_DOCK
+      const result = await SafeChrome.sendTabMessage(this.state.currentTabId, {
+        type: MESSAGE_TYPES.SHOW_DOCK,
+        data: { waitingMode }
       });
       
-      if (result.success) {
-        console.log('✅ [ServiceWorker] SHOW_DOCK sent successfully');
+      if (result?.success) {
+        console.log(' [ServiceWorker] SHOW_DOCK sent successfully');
         return;
       }
       
-      console.warn(`⚠️ [ServiceWorker] SHOW_DOCK attempt ${i+1} failed, retrying...`);
+      console.warn(` [ServiceWorker] SHOW_DOCK attempt ${i+1} failed, retrying...`);
       await new Promise(r => setTimeout(r, 300));
     }
     
-    console.error('❌ [ServiceWorker] Failed to show dock after retries');
+    console.error(' [ServiceWorker] Failed to show dock after retries');
   }
 
   async waitOffscreenReady(timeoutMs) {
