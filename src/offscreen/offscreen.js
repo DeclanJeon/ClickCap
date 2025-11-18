@@ -10,6 +10,57 @@ const REC_MIME = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
+// ============ 새로 추가: CSS → Video 좌표 변환 함수 ============
+function buildCssToVideoTransform(videoWidth, videoHeight, view) {
+  if (!view) {
+    return {
+      scaleX: 1,
+      scaleY: 1,
+      offsetX: 0,
+      offsetY: 0
+    };
+  }
+
+  const {
+    viewportWidth,
+    viewportHeight,
+    dpr,
+    scrollX,
+    scrollY,
+    vvScale,
+    vvOffsetLeft,
+    vvOffsetTop,
+    vvWidth,
+    vvHeight
+  } = view;
+
+  // 1) DPR 기반 스케일 추정
+  const scaleX = videoWidth / (viewportWidth * dpr);
+  const scaleYBase = videoHeight / (viewportHeight * dpr);
+
+  // 2) visualViewport 반영
+  const effectiveScaleX = scaleX * (vvScale || 1);
+  const effectiveScaleY = scaleYBase * (vvScale || 1);
+
+  // 3) 상단 UI 높이 추정
+  const visibleCssHeight = vvHeight || viewportHeight;
+  const visibleVideoHeight = visibleCssHeight * dpr * (vvScale || 1);
+  const extraVertical = Math.max(0, videoHeight - visibleVideoHeight);
+  const topUiPx = extraVertical * 0.5;
+
+  // 4) 스크롤 오프셋 반영
+  const offsetX = (scrollX + (vvOffsetLeft || 0)) * effectiveScaleX;
+  const offsetY = topUiPx + (scrollY + (vvOffsetTop || 0)) * effectiveScaleY;
+
+  return {
+    scaleX: effectiveScaleX,
+    scaleY: effectiveScaleY,
+    offsetX,
+    offsetY
+  };
+}
+// ============================================================
+
 class OffscreenRecorder {
   constructor() {
     this.mediaStream = null;
@@ -29,6 +80,12 @@ class OffscreenRecorder {
     this.currentCrop = null;
     this.frameCount = 0;
 
+    // 추가: 좌표 변환 정보 저장
+    this.cropVideo = null;
+    this.cropAreaCSS = null;
+    this.viewContext = null;
+    this.cssToVideoTransform = null;
+
     // GIF 관련
     this.gifEncoder = null;
     this.gifFrames = [];
@@ -36,17 +93,18 @@ class OffscreenRecorder {
     this.isEncodingGif = false;
     this.gifEncodingProgress = 0;
 
-    // 클릭 줌 관련
+    // 줌 상태
     this.zoomState = {
       isZooming: false,
       targetArea: null,
       startTime: 0,
-      duration: 800,
-      scale: 1.5,
-      easeProgress: 0
+      holdDuration: 800,   // elementZoomDuration을 여기 저장
+      inDuration: 200,
+      outDuration: 200,
+      scale: 1.5
     };
 
-    // 기본 설정
+    // 설정
     this.state = {
       format: DEFAULT_PREFERENCES.format || 'webm',
       fps: DEFAULT_PREFERENCES.fps || 30,
@@ -184,7 +242,7 @@ class OffscreenRecorder {
 
     if (typeof prefs.elementZoomDuration !== 'undefined') {
       this.state.elementZoomDuration = parseInt(prefs.elementZoomDuration, 10) || 800;
-      this.zoomState.duration = this.state.elementZoomDuration;
+      this.zoomState.holdDuration = this.state.elementZoomDuration;
     }
     
     console.log('🔧 [Offscreen] Preferences updated:', {
@@ -194,23 +252,37 @@ class OffscreenRecorder {
   }
 
   handleElementZoom(data) {
-    if (!data?.zoomArea || !this.state.clickElementZoomEnabled) {
-      return { success: false };
-    }
-    
-    this.zoomState.isZooming = true;
-    this.zoomState.targetArea = data.zoomArea;
-    this.zoomState.startTime = data.timestamp || Date.now();
-    this.zoomState.easeProgress = 0;
-    
-    console.log('🔍 [Offscreen] Zoom started:', {
-      area: this.zoomState.targetArea,
-      scale: this.zoomState.scale,
-      duration: this.zoomState.duration
-    });
-    
-    return { success: true };
+  console.log('📥 [Offscreen] Zoom request received:', data);
+
+  if (!data?.zoomArea) {
+    console.warn('⚠️ [Offscreen] No zoom area provided');
+    return { success: false, error: 'No zoom area' };
   }
+
+  if (!this.state.clickElementZoomEnabled) {
+    console.warn('⚠️ [Offscreen] Zoom disabled in preferences');
+    return { success: false, error: 'Zoom disabled' };
+  }
+
+  // ✅ currentCrop 체크 제거 (줌은 crop과 독립적으로 작동해야 함)
+  console.log('🔍 [Offscreen] Current state:', {
+    hasCurrentCrop: !!this.currentCrop,
+    isRecording: !!this.recorder,
+    zoomEnabled: this.state.clickElementZoomEnabled,
+    hasTransform: !!this.cssToVideoTransform
+  });
+
+  // ✅ Zoom state 업데이트
+  this.zoomState.isZooming = true;
+  this.zoomState.targetArea = data.zoomArea;
+  this.zoomState.startTime = data.timestamp || Date.now();
+  this.zoomState.scale = this.state.elementZoomScale || 1.5;
+  this.zoomState.holdDuration = this.state.elementZoomDuration || 800;
+  this.zoomState.inDuration = 200;
+  this.zoomState.outDuration = 200;
+
+  return { success: true };
+}
 
   async startRecording({ streamId, cropAreaCSS, view, preferences }) {
     try {
@@ -467,22 +539,39 @@ class OffscreenRecorder {
 
   renderFrame() {
     try {
-      if (!this.video || !this.canvas || !this.currentCrop || !this.ctx) {
+      if (!this.video || !this.canvas || !this.ctx) {
         return;
       }
 
-      const c = this.currentCrop;
+      // ✅ currentCrop이 없으면 전체 비디오 렌더링
+      const crop = this.currentCrop || {
+        x: 0,
+        y: 0,
+        width: this.video.videoWidth,
+        height: this.video.videoHeight
+      };
 
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-      // 줌 효과 적용
+      // ✅ 줌 상태 로그 (처음 몇 프레임만)
+      if (this.frameCount < 5 || this.zoomState.isZooming) {
+        console.log('🎞️ [Offscreen] Frame render:', {
+          frameCount: this.frameCount,
+          isZooming: this.zoomState.isZooming,
+          zoomEnabled: this.state.clickElementZoomEnabled,
+          hasCrop: !!this.currentCrop,
+          canvasSize: { w: this.canvas.width, h: this.canvas.height },
+          cropSize: { x: crop.x, y: crop.y, w: crop.width, h: crop.height }
+        });
+      }
+
       if (this.zoomState.isZooming && this.state.clickElementZoomEnabled) {
-        this.renderWithZoom(c);
+        this.renderWithZoom(crop);
       } else {
         // 일반 렌더링
         this.ctx.drawImage(
           this.video,
-          c.x, c.y, c.width, c.height,
+          crop.x, crop.y, crop.width, crop.height,
           0, 0, this.canvas.width, this.canvas.height
         );
       }
@@ -509,60 +598,59 @@ class OffscreenRecorder {
   }
 
   renderWithZoom(cropArea) {
-    const now = Date.now();
-    const elapsed = now - this.zoomState.startTime;
-    const progress = Math.min(elapsed / this.zoomState.duration, 1);
-    
-    // Ease-in-out 함수
-    const easeInOutCubic = (t) => {
-      return t < 0.5 
-        ? 4 * t * t * t 
-        : 1 - Math.pow(-2 * t + 2, 3) / 2;
-    };
-    
-    const easedProgress = easeInOutCubic(progress);
-    
-    // 줌 단계 계산 (0 → scale → 0)
-    let currentScale;
-    if (progress < 0.5) {
-      // 줌 인 (0 → 1)
-      currentScale = 1 + (this.zoomState.scale - 1) * (easedProgress * 2);
-    } else {
-      // 줌 아웃 (1 → 0)
-      currentScale = 1 + (this.zoomState.scale - 1) * (2 - easedProgress * 2);
-    }
-    
-    const zoomArea = this.zoomState.targetArea;
-    
-    // 줌 중심점 계산
-    const zoomCenterX = zoomArea.x + zoomArea.width / 2;
-    const zoomCenterY = zoomArea.y + zoomArea.height / 2;
-    
-    // 줌 적용된 영역 계산
-    const scaledWidth = cropArea.width / currentScale;
-    const scaledHeight = cropArea.height / currentScale;
-    
-    // 줌 중심을 기준으로 새로운 crop 영역 계산
-    const zoomedX = cropArea.x + zoomCenterX - scaledWidth / 2;
-    const zoomedY = cropArea.y + zoomCenterY - scaledHeight / 2;
-    
-    // 경계 체크
-    const finalX = Math.max(cropArea.x, Math.min(zoomedX, cropArea.x + cropArea.width - scaledWidth));
-    const finalY = Math.max(cropArea.y, Math.min(zoomedY, cropArea.y + cropArea.height - scaledHeight));
-    
-    // 줌 효과 렌더링
-    this.ctx.drawImage(
+  const now = Date.now();
+  const elapsed = now - this.zoomState.startTime;
+
+  const { inDuration, holdDuration, outDuration, scale } = this.zoomState;
+  const totalDuration = inDuration + holdDuration + outDuration;
+
+  if (elapsed >= totalDuration) {
+    this.zoomState.isZooming = false;
+    // 마지막 프레임은 원래 상태(1.0배)로 렌더링하도록 호출한 쪽에서 처리
+    return this.ctx.drawImage(
       this.video,
-      finalX, finalY, scaledWidth, scaledHeight,
+      cropArea.x, cropArea.y, cropArea.width, cropArea.height,
       0, 0, this.canvas.width, this.canvas.height
     );
-    
-    // 줌 완료 체크
-    if (progress >= 1) {
-      this.zoomState.isZooming = false;
-      console.log('✅ [Offscreen] Zoom completed');
-    }
   }
+
+  let currentScale;
+
+  if (elapsed < inDuration) {
+    // 확대 구간: 0 → inDuration
+    const t = elapsed / inDuration; // 0~1
+    const eased = t * t * (3 - 2 * t); // smoothstep
+    currentScale = 1 + (scale - 1) * eased;
+  } else if (elapsed < inDuration + holdDuration) {
+    // 고정 구간: scale 유지
+    currentScale = scale;
+  } else {
+    // 축소 구간: inDuration+holdDuration → totalDuration
+    const t = (elapsed - inDuration - holdDuration) / outDuration; // 0~1
+    const eased = t * t * (3 - 2 * t);
+    currentScale = scale - (scale - 1) * eased;
+  }
+
+  // cropArea 기준에서 targetArea 중심으로 줌
+  const zoomArea = this.zoomState.targetArea;
+  const zoomCenterX = zoomArea.x + zoomArea.width / 2;
+  const zoomCenterY = zoomArea.y + zoomArea.height / 2;
+
+  const scaledWidth = cropArea.width / currentScale;
+  const scaledHeight = cropArea.height / currentScale;
+
+  const zoomedX = cropArea.x + zoomCenterX - scaledWidth / 2;
+  const zoomedY = cropArea.y + zoomCenterY - scaledHeight / 2;
+
+  const finalX = Math.max(cropArea.x, Math.min(zoomedX, cropArea.x + cropArea.width - scaledWidth));
+  const finalY = Math.max(cropArea.y, Math.min(zoomedY, cropArea.y + cropArea.height - scaledHeight));
+
+  this.ctx.drawImage(
+    this.video,
+    finalX, finalY, scaledWidth, scaledHeight,
+    0, 0, this.canvas.width, this.canvas.height
+  );
+}
 
   qualityToBitrate(q) {
     const bitrateMap = {
@@ -882,4 +970,40 @@ class OffscreenRecorder {
   }
 }
 
-new OffscreenRecorder();
+const offscreenRecorder = new OffscreenRecorder();
+
+// ✅ 강제로 줌 테스트 (3초 후)
+setTimeout(() => {
+  console.log('🧪 [Offscreen] Testing zoom after 3 seconds...');
+  console.log('🧪 Current state:', {
+    hasVideo: !!offscreenRecorder.video,
+    videoSize: offscreenRecorder.video ? {
+      w: offscreenRecorder.video.videoWidth,
+      h: offscreenRecorder.video.videoHeight
+    } : null,
+    isRecording: !!offscreenRecorder.recorder,
+    zoomEnabled: offscreenRecorder.state.clickElementZoomEnabled,
+    hasCrop: !!offscreenRecorder.currentCrop
+  });
+
+  if (offscreenRecorder.video) {
+    const testZoomArea = {
+      x: 100,
+      y: 100,
+      width: 200,
+      height: 200,
+      scale: 1.5
+    };
+
+    console.log('🧪 Sending test zoom:', testZoomArea);
+
+    const result = offscreenRecorder.handleElementZoom({
+      zoomArea: testZoomArea,
+      timestamp: Date.now()
+    });
+
+    console.log('🧪 Test zoom result:', result);
+  } else {
+    console.log('🧪 No video ready for test');
+  }
+}, 3000);

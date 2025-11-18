@@ -147,7 +147,10 @@ class ServiceWorkerMain {
       preferences: { ...DEFAULT_PREFERENCES },
       startedAt: 0,
       isStarting: false,
-      offscreenReady: false
+      offscreenReady: false,
+
+      // ✅ 추가: 녹화 세션 상태
+      recordingSession: null // { tabId, cropArea, startTime, isActive, preferences }
     };
     this.setup();
     this.setupKeepAlive();
@@ -175,9 +178,54 @@ class ServiceWorkerMain {
       }
     });
 
-    chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       if (changeInfo.status === 'complete') {
-        setTimeout(() => messageQueue.processQueue(tabId), 100);
+        // ✅ 녹화 중인 탭인지 확인
+        if (this.state.recordingSession?.isActive &&
+            this.state.recordingSession.tabId === tabId) {
+
+          console.log('🔄 [ServiceWorker] Recording tab updated, restoring UI...');
+
+          // Content script 재주입 (이미 있으면 스킵됨)
+          chrome.tabs.sendMessage(tabId, { type: 'ping' }, async (response) => {
+            if (chrome.runtime.lastError || !response?.success) {
+              console.log('📌 [ServiceWorker] Re-injecting content script');
+
+              try {
+                await chrome.scripting.executeScript({
+                  target: { tabId },
+                  files: ['src/content/content-script.js']
+                });
+
+                console.log('✅ [ServiceWorker] Content script re-injected');
+              } catch (err) {
+                console.warn('[ServiceWorker] Failed to re-inject:', err);
+              }
+            }
+          });
+        } else {
+          // 일반 메시지 큐 처리
+          setTimeout(() => messageQueue.processQueue(tabId), 100);
+        }
+      }
+    });
+
+    // ✅ Tab 네비게이션 감지 (디버깅용 로깅만)
+    chrome.webNavigation.onCommitted.addListener(async (details) => {
+      if (details.frameId !== 0) return; // 메인 프레임만 처리
+
+      const tabId = details.tabId;
+
+      // 녹화 중인 탭인지 확인
+      if (this.state.recordingSession?.isActive &&
+          this.state.recordingSession.tabId === tabId) {
+
+        console.log('🔄 [ServiceWorker] Page navigation detected during recording');
+        console.log('📊 [ServiceWorker] Navigation details:', {
+          transitionType: details.transitionType,
+          url: details.url
+        });
+        // 자동 중지 기능 제거 - 사용자가 수동으로 중지할 수 있도록 함
       }
     });
 
@@ -234,6 +282,12 @@ class ServiceWorkerMain {
       case MESSAGE_TYPES.UPDATE_PREFS:
         this.state.preferences = { ...this.state.preferences, ...(message.data || {}) };
         await storageManager.saveChromeStorage(STORAGE_KEYS.USER_PREFERENCES, this.state.preferences);
+
+        // ✅ 녹화 세션 업데이트
+        if (this.state.recordingSession && this.state.recordingSession.isActive) {
+          this.state.recordingSession.preferences = { ...this.state.preferences };
+        }
+
         if (this.state.isRecording && this.state.currentTabId) {
           await SafeChrome.sendMessage({ type: MESSAGE_TYPES.UPDATE_PREFS, target: 'offscreen', data: this.state.preferences });
           await SafeChrome.sendTabMessage(this.state.currentTabId, { type: MESSAGE_TYPES.UPDATE_PREFS, data: this.state.preferences });
@@ -243,6 +297,22 @@ class ServiceWorkerMain {
           });
         }
         return { success: true };
+      case MESSAGE_TYPES.ELEMENT_CLICKED_ZOOM:
+        console.log('📥 [ServiceWorker] Received zoom request:', message.data);
+
+        const zoomResult = await SafeChrome.sendMessage({
+          type: MESSAGE_TYPES.ELEMENT_CLICKED_ZOOM,
+          target: 'offscreen',
+          data: message.data
+        });
+
+        console.log('📤 [ServiceWorker] Zoom forwarded to offscreen:', zoomResult);
+        return zoomResult;
+      case 'GET_RECORDING_SESSION': // ✅ 추가
+        return {
+          success: true,
+          session: this.state.recordingSession
+        };
       default:
         return { success: true };
     }
@@ -408,20 +478,46 @@ class ServiceWorkerMain {
     const prefs = (await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES))
       || this.state.preferences;
 
-    // crop 정보를 content script에 전달하여 녹화 영역 표시
-    const cropResult = await messageQueue.enqueue(this.state.currentTabId, {
+    // ✅ Content script가 준비될 때까지 대기
+    let contentScriptReady = false;
+    for (let i = 0; i < 10; i++) {
+      const pingResult = await SafeChrome.sendTabMessage(this.state.currentTabId, {
+        type: 'ping'
+      });
+
+      if (pingResult?.success) {
+        contentScriptReady = true;
+        console.log('✅ [ServiceWorker] Content script ready');
+        break;
+      }
+
+      console.log(`⏳ [ServiceWorker] Waiting for content script (${i + 1}/10)...`);
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    if (!contentScriptReady) {
+      console.error('❌ [ServiceWorker] Content script not ready after 10 attempts');
+      return { success: false, error: 'Content script not responding' };
+    }
+
+    // ✅ Crop 영역 설정 (즉시 설정하여 대기 모드에서도 클릭 감지 가능)
+    const cropResult = await SafeChrome.sendTabMessage(this.state.currentTabId, {
       type: 'set-recording-crop',
-      data: { ...cropArea, isSelecting: false }
+      data: {
+        ...cropArea,
+        isSelecting: false,
+        waitingMode: true  // ✅ 대기 모드 플래그 추가
+      }
     });
 
-    console.log(' [ServiceWorker] Crop area set result:', cropResult);
+    console.log('✅ [ServiceWorker] Crop area set result:', cropResult);
 
     // Dock 표시 (대기 모드)
     if (prefs.showDock) {
       await this.showDockWithRetry(true); // waitingMode = true
     }
 
-    console.log(' [ServiceWorker] Area selected, waiting for user to start recording');
+    console.log('✅ [ServiceWorker] Area selected, waiting for user to start recording');
 
     return { success: true };
   }
@@ -467,12 +563,14 @@ class ServiceWorkerMain {
 
     await this.startCapture({ cropArea: this.state.cropArea, view }, this.state.preferences);
 
-    // 녹화 시작 알림
-    await SafeChrome.sendTabMessage(this.state.currentTabId, {
-      type: 'recording-started'
-    });
+  // ✅ Content script에 녹화 시작 알림
+  await SafeChrome.sendTabMessage(this.state.currentTabId, {
+    type: 'recording-started'
+  });
 
-    return { success: true };
+  console.log('✅ [ServiceWorker] Area recording started');
+
+  return { success: true };
   }
 
   async showDockWithRetry(waitingMode = false) {
@@ -538,16 +636,46 @@ class ServiceWorkerMain {
     this.state.isRecording = true;
     this.state.isPaused = false;
     this.state.startedAt = Date.now();
+
+    // ✅ 녹화 세션 저장
+    this.state.recordingSession = {
+      tabId: this.state.currentTabId,
+      cropArea: payload.cropArea,
+      startTime: Date.now(),
+      isActive: true,
+      preferences: { ...preferences }
+    };
+
+    console.log('✅ [ServiceWorker] Recording session saved:', this.state.recordingSession);
   }
 
   async forwardStats(data) {
     if (this.state.currentTabId) {
-      await SafeChrome.sendTabMessage(this.state.currentTabId, {
+      // ✅ 탭이 존재하는지 먼저 확인
+      try {
+        const tab = await chrome.tabs.get(this.state.currentTabId);
+        if (!tab?.id) {
+          console.warn('[ServiceWorker] Tab does not exist, cannot forward stats');
+          return { success: false };
+        }
+      } catch (e) {
+        console.warn('[ServiceWorker] Tab check failed:', e);
+        return { success: false };
+      }
+
+      // ✅ Stats 전송
+      const result = await SafeChrome.sendTabMessage(this.state.currentTabId, {
         type: MESSAGE_TYPES.UPDATE_DOCK_STATS,
         data
       });
+
+      if (!result.success) {
+        console.warn('[ServiceWorker] Failed to forward stats:', result.error);
+      }
+
+      return result;
     }
-    return { success: true };
+    return { success: false };
   }
 
   async stopCmd() {
@@ -562,21 +690,30 @@ class ServiceWorkerMain {
     // 상태 업데이트
     this.state.isRecording = false;
     this.state.isPaused = false;
+
+    // ✅ 녹화 세션 종료
+    if (this.state.recordingSession) {
+      this.state.recordingSession.isActive = false;
+      this.state.recordingSession = null; // ✅ 완전히 제거
+      console.log('✅ [ServiceWorker] Recording session cleared');
+    }
     
-    // Content script에 Dock 숨김 신호 전송
+    // ✅ Content script에 HIDE_DOCK 전송
     if (this.state.currentTabId) {
       console.log('📤 [ServiceWorker] Sending HIDE_DOCK to tab:', this.state.currentTabId);
-      
+
       await SafeChrome.sendTabMessage(this.state.currentTabId, {
         type: MESSAGE_TYPES.HIDE_DOCK
       });
-      
-      // 추가로 cleanup 신호도 전송 (안전장치)
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
+
+      // ✅ 추가 대기 후 cleanup
+      await new Promise(resolve => setTimeout(resolve, 200));
+
       await SafeChrome.sendTabMessage(this.state.currentTabId, {
         type: 'cleanup-recording-ui'
       });
+
+      console.log('✅ [ServiceWorker] Cleanup messages sent');
     }
     
     return { success: true };

@@ -24,46 +24,53 @@ let __CTX_INVALID = false;
 function safeSend(msg, options = {}) {
   const { timeout = 5000, silent = false } = options;
   return new Promise((resolve) => {
+    // Early exit if context is already invalid
     if (__CTX_INVALID) {
       resolve({ success: false, error: 'Context invalid', fatal: true });
       return;
     }
-    try {
-      if (!chrome?.runtime?.id) {
-        __CTX_INVALID = true;
-        resolve({ success: false, error: 'Context invalid', fatal: true });
-        return;
-      }
-    } catch {
+
+    // Fast context check without try-catch for performance
+    if (!chrome?.runtime?.id) {
       __CTX_INVALID = true;
-      resolve({ success: false, error: 'Context check failed', fatal: true });
+      if (!silent) console.error('[ContentScript] Extension context unavailable');
+      resolve({ success: false, error: 'Extension context unavailable', fatal: true });
       return;
     }
+
     const timeoutId = setTimeout(() => {
       if (!silent) console.warn('[ContentScript] Message timeout:', msg.type);
-      resolve({ success: false, error: 'Timeout' });
+      resolve({ success: false, error: 'Message timeout' });
     }, timeout);
+
     try {
       chrome.runtime.sendMessage(msg, (response) => {
         clearTimeout(timeoutId);
+
         if (chrome.runtime.lastError) {
           const error = chrome.runtime.lastError.message;
-          if (error.includes('Extension context invalidated') || error.includes('Receiving end does not exist')) {
+
+          // Check for fatal context errors
+          if (error.includes('Extension context invalidated') ||
+              error.includes('Receiving end does not exist') ||
+              error.includes('message channel closed')) {
             __CTX_INVALID = true;
-            if (!silent) console.error('[ContentScript] Fatal error:', error);
-            resolve({ success: false, error, fatal: true });
+            if (!silent) console.error('[ContentScript] Extension context lost:', error);
+            resolve({ success: false, error: 'Extension context lost', fatal: true });
           } else {
-            if (!silent) console.warn('[ContentScript] Error:', error);
+            // Non-fatal errors (e.g., service worker busy)
+            if (!silent) console.warn('[ContentScript] Runtime error:', error);
             resolve({ success: false, error });
           }
         } else {
+          // Success - ensure we always return a success response
           resolve(response || { success: true });
         }
       });
     } catch (error) {
       clearTimeout(timeoutId);
       __CTX_INVALID = true;
-      if (!silent) console.error('[ContentScript] Exception:', error.message);
+      if (!silent) console.error('[ContentScript] Message exception:', error.message);
       resolve({ success: false, error: error.message, fatal: true });
     }
   });
@@ -1363,6 +1370,7 @@ class Dock {
 class RecordingOverlay {
   constructor() {
     this.host = document.createElement('div');
+    this.host.id = 'screen-recorder-overlay'; // ✅ ID 추가
     this.host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483645; pointer-events:none;';
     const shadow = this.host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
@@ -1374,11 +1382,21 @@ class RecordingOverlay {
     this.box.className = 'box';
     this.overlay.appendChild(this.box);
     shadow.appendChild(this.overlay);
+
+    console.log('✅ [RecordingOverlay] Constructor completed');
   }
 
   show(crop) {
-    if (!document.body) return;
-    if (!document.body.contains(this.host)) document.body.appendChild(this.host);
+    if (!document.body) {
+      console.warn('[RecordingOverlay] document.body not ready');
+      return;
+    }
+
+    if (!document.body.contains(this.host)) {
+      document.body.appendChild(this.host);
+      console.log('✅ [RecordingOverlay] Appended to body');
+    }
+
     this.update(crop);
   }
 
@@ -1390,7 +1408,23 @@ class RecordingOverlay {
   }
 
   hide() {
-    if (this.host.parentNode) this.host.parentNode.removeChild(this.host);
+    try {
+      if (this.host && this.host.parentNode) {
+        this.host.parentNode.removeChild(this.host);
+      }
+    } catch (e) {
+      // Silently handle removal errors
+    }
+
+    // 강제로 ID로 찾아서 제거
+    try {
+      const overlay = document.getElementById('screen-recorder-overlay');
+      if (overlay && overlay.parentNode) {
+        overlay.parentNode.removeChild(overlay);
+      }
+    } catch (e) {
+      // Silently handle force removal errors
+    }
   }
 }
 
@@ -1407,7 +1441,8 @@ class ContentMain {
     this.recordingOverlay = new RecordingOverlay();
     this.currentCrop = null;
 
-    this.elementZoomEnabled = false;
+    // ✅ 기본값을 true로 설정
+    this.elementZoomEnabled = true;  // ← 이전: false
     this.elementZoomScale = 1.5;
     this.elementZoomDuration = 800;
     this.lastClickTime = 0;
@@ -1418,6 +1453,17 @@ class ContentMain {
     this.setupMessageListener();
     this.init();
     window.__screenRecorderShutdown = () => this.cleanup();
+
+    // ✅ 디버깅 코드 추가
+    setTimeout(() => {
+      console.log('🔍 [ContentMain] Listener check:', {
+        hasClickHandler: !!this._clickHandler,
+        isInitialized: this.isInitialized,
+        elementZoomEnabled: this.elementZoomEnabled,
+        hasCrop: !!this.currentCrop,
+        isRecording: this.isRecording
+      });
+    }, 2000);
   }
 
   setupMessageListener() {
@@ -1493,8 +1539,14 @@ class ContentMain {
           await safeSend({ type: MESSAGE_TYPES.CONTENT_SCRIPT_READY, initTime });
         } catch {}
         
-        this.setupClickEventListener();
-        this.sendViewportInfo();
+        // ✅ 초기화 완료 후 클릭 리스너 등록
+      this.setupClickEventListener();
+      console.log('✅ [ContentMain] Click listener registered');
+
+      // ✅ 녹화 세션 복원
+      await this.restoreRecordingSession();
+
+      this.sendViewportInfo();
       } catch (error) {
         console.error('❌ [ContentMain] Initialization failed:', error);
         this.isInitialized = false;
@@ -1504,63 +1556,151 @@ class ContentMain {
     return this.initPromise;
   }
 
+  // ✅ 새 메서드: 녹화 세션 복원
+  async restoreRecordingSession() {
+    try {
+      const response = await safeSend({ type: 'GET_RECORDING_SESSION' });
+
+      if (!response?.success || !response?.session) {
+        console.log('ℹ️ [ContentMain] No active recording session');
+        return;
+      }
+
+      const session = response.session;
+
+      if (!session.isActive) {
+        console.log('ℹ️ [ContentMain] Recording session is not active');
+        return;
+      }
+
+      console.log('🔄 [ContentMain] Restoring recording session:', session);
+
+      // 상태 복원
+      this.currentCrop = session.cropArea;
+      this.isRecording = true;
+      this.elementZoomEnabled = session.preferences?.clickElementZoomEnabled !== false;
+      this.elementZoomScale = session.preferences?.elementZoomScale || 1.5;
+      this.elementZoomDuration = session.preferences?.elementZoomDuration || 800;
+
+      // ✅ UI 복원 (약간의 지연 후)
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      if (this.currentCrop) {
+        this.recordingOverlay.show(this.currentCrop);
+        console.log('✅ [ContentMain] Recording overlay restored');
+      }
+
+      this.dock.show(false); // waitingMode = false
+      this.dock.updateZoomState(
+        this.elementZoomEnabled,
+        this.elementZoomScale,
+        this.elementZoomDuration
+      );
+
+      console.log('✅ [ContentMain] Recording session restored successfully');
+
+    } catch (error) {
+      console.warn('⚠️ [ContentMain] Failed to restore recording session:', error);
+    }
+  }
+
   setupClickEventListener() {
-    document.addEventListener('click', (e) => {
+    console.log('🔧 [ContentMain] Setting up click listener...');
+
+    // ✅ 이전 리스너 제거 (중복 방지)
+    if (this._clickHandler) {
+      document.removeEventListener('click', this._clickHandler, true);
+      console.log('🗑️ [ContentMain] Removed previous click listener');
+    }
+
+    // ✅ 리스너 함수를 인스턴스 변수로 저장
+    this._clickHandler = (e) => {
+      // Dock 클릭 무시
+      const isDockClick = e.target.closest('#screen-recorder-dock');
+      if (isDockClick) {
+        return;
+      }
+
       this.handleClickEvent(e);
-    }, true);
+    };
+
+    document.addEventListener('click', this._clickHandler, true);
+    console.log('✅ [ContentMain] Click listener registered');
   }
 
   handleClickEvent(e) {
-    try {
-      if (!chrome?.runtime?.id) return;
-    } catch {
+  // 녹화 중이 아니면 아무 것도 하지 않음
+  if (!this.isRecording) {
+    return;
+  }
+
+  // crop 영역이 없으면 (초기화 전, 정리 후) 아무 것도 하지 않음
+  if (!this.currentCrop) {
+    return;
+  }
+
+  // 줌이 비활성화되어 있으면 아무 것도 하지 않음
+  if (!this.elementZoomEnabled) {
+    return;
+  }
+
+  const now = Date.now();
+  if (now - this.lastClickTime < this.clickThrottleMs) {
+    return;
+  }
+  this.lastClickTime = now;
+
+  const clickX = e.clientX;
+  const clickY = e.clientY;
+
+  const isInsideCrop =
+    clickX >= this.currentCrop.x &&
+    clickX <= this.currentCrop.x + this.currentCrop.width &&
+    clickY >= this.currentCrop.y &&
+    clickY <= this.currentCrop.y + this.currentCrop.height;
+
+  if (!isInsideCrop) {
+    // 영역 밖 클릭은 그냥 무시
+    return;
+  }
+
+  const element = document.elementFromPoint(clickX, clickY);
+  if (!element) {
+    return;
+  }
+
+  const rect = element.getBoundingClientRect();
+
+  const relativeX = rect.left - this.currentCrop.x;
+  const relativeY = rect.top - this.currentCrop.y;
+  const relativeWidth = rect.width;
+  const relativeHeight = rect.height;
+
+  const padding = 20;
+  const zoomArea = {
+    x: Math.max(0, relativeX - padding),
+    y: Math.max(0, relativeY - padding),
+    width: Math.min(relativeWidth + padding * 2, this.currentCrop.width),
+    height: Math.min(relativeHeight + padding * 2, this.currentCrop.height),
+    scale: this.elementZoomScale || 1.5
+  };
+
+  // ✅ 직접 메시지 전송 (safeSend 우회)
+  chrome.runtime.sendMessage({
+    type: MESSAGE_TYPES.ELEMENT_CLICKED_ZOOM,
+    data: {
+      zoomArea,
+      timestamp: now
+    }
+  }, (response) => {
+    // 여기도 굳이 콘솔 경고 찍지 않고 조용히 넘어가도 됨
+    if (chrome.runtime.lastError) {
       return;
     }
-
-    if (!this.elementZoomEnabled || !this.currentCrop) return;
-
-    const now = Date.now();
-    if (now - this.lastClickTime < this.clickThrottleMs) return;
-    this.lastClickTime = now;
-
-    const clickX = e.clientX;
-    const clickY = e.clientY;
-
-    const isInsideCrop =
-      clickX >= this.currentCrop.x &&
-      clickX <= this.currentCrop.x + this.currentCrop.width &&
-      clickY >= this.currentCrop.y &&
-      clickY <= this.currentCrop.y + this.currentCrop.height;
-
-    if (!isInsideCrop) return;
-
-    const element = document.elementFromPoint(clickX, clickY);
-    if (!element) return;
-
-    const rect = element.getBoundingClientRect();
-
-    const relativeX = rect.left - this.currentCrop.x;
-    const relativeY = rect.top - this.currentCrop.y;
-    const relativeWidth = rect.width;
-    const relativeHeight = rect.height;
-
-    const padding = 20;
-    const zoomArea = {
-      x: Math.max(0, relativeX - padding),
-      y: Math.max(0, relativeY - padding),
-      width: Math.min(relativeWidth + padding * 2, this.currentCrop.width),
-      height: Math.min(relativeHeight + padding * 2, this.currentCrop.height),
-      scale: this.elementZoomScale || 1.5
-    };
-
-    messageQueue.enqueue({
-      type: MESSAGE_TYPES.ELEMENT_CLICKED_ZOOM,
-      target: 'offscreen',
-      data: {
-        zoomArea,
-        timestamp: now
-      }
-    });
+    if (!response?.success) {
+      return;
+    }
+  });
   }
 
   async route(msg) {
@@ -1568,9 +1708,12 @@ class ContentMain {
       await this.initPromise;
     }
 
-    console.log('📨 [ContentMain] Received message:', msg.type);
+    console.log('📥 [ContentMain] Received message:', msg.type);
 
     switch (msg.type) {
+      case 'ping':
+        return { success: true, timestamp: Date.now() };
+
       case MESSAGE_TYPES.SHOW_AREA_SELECTOR:
         if (!this.areaSelector) {
           this.areaSelector = new AreaSelector(({ cropArea, view }) => {
@@ -1615,13 +1758,33 @@ class ContentMain {
 
       case MESSAGE_TYPES.HIDE_DOCK:
         console.log('🛑 [ContentMain] HIDE_DOCK received');
+
+        // ✅ 상태 먼저 초기화
         this.isRecording = false;
-        this.dock.hide();
-        
-        // 녹화 영역 박스도 함께 제거
-        this.recordingOverlay.hide();
         this.currentCrop = null;
-        
+
+        // ✅ UI 제거
+        if (this.dock) {
+          this.dock.hide();
+        }
+
+        if (this.recordingOverlay) {
+          this.recordingOverlay.hide();
+        }
+
+        // ✅ 추가 확인: DOM에서 강제 제거
+        setTimeout(() => {
+          try {
+            const overlay = document.getElementById('screen-recorder-overlay');
+            if (overlay && overlay.parentNode) {
+              overlay.parentNode.removeChild(overlay);
+              console.log('✅ [ContentMain] Force removed overlay after timeout');
+            }
+          } catch (e) {
+            console.warn('[ContentMain] Failed to force remove overlay:', e);
+          }
+        }, 100);
+
         return { success: true };
 
       case MESSAGE_TYPES.UPDATE_DOCK_STATS:
@@ -1629,25 +1792,47 @@ class ContentMain {
         return { success: true };
 
       case 'recording-started':
-        console.log(' [ContentMain] Recording started notification');
-        
-        // 녹화 시작 시 녹화 영역 테두리 표시
-        if (this.currentCrop) {
-          this.recordingOverlay.show(this.currentCrop);
-        }
-        
-        return { success: true };
+      console.log('🎬 [ContentMain] Recording started notification');
+
+      this.isRecording = true; // ✅ 녹화 상태 플래그 설정
+
+      if (this.currentCrop) {
+        // ✅ 대기 모드에서 이미 표시된 overlay를 유지하거나 새로 표시
+        this.recordingOverlay.show(this.currentCrop);
+        console.log('✅ [ContentMain] Recording overlay shown');
+      } else {
+        console.warn('⚠️ [ContentMain] No crop area for recording overlay');
+      }
+
+      // ✅ 경고 토스트
+      const warningToast = document.createElement('div');
+      warningToast.style.cssText = 'all:initial;position:fixed;top:80px;right:20px;z-index:2147483647;background:rgba(255,152,0,.95);color:#fff;padding:12px 16px;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 6px 18px rgba(0,0,0,.3);max-width:300px;';
+      warningToast.textContent = '⚠️ 녹화 중 페이지를 이동하면 녹화가 자동 중지됩니다.';
+      document.body.appendChild(warningToast);
+      setTimeout(() => warningToast.remove(), 5000);
+
+      return { success: true };
 
       case 'set-recording-crop':
         this.currentCrop = msg.data;
-        
-        console.log(' [ContentMain] Crop area set:', this.currentCrop);
-        
-        // 영역만 설정하고 테두리는 표시하지 않음 (녹화 시작 전)
-        // 녹화 시작 시 'recording-started' 메시지로 테두리 표시
-        
-        this.sendViewportInfo();
-        return { success: true };
+
+        console.log('✅ [ContentMain] Crop area set:', this.currentCrop);
+      console.log('🔍 [ContentMain] Current state:', {
+        elementZoomEnabled: this.elementZoomEnabled,
+        elementZoomScale: this.elementZoomScale,
+        elementZoomDuration: this.elementZoomDuration,
+        isRecording: this.isRecording,
+        hasCrop: !!this.currentCrop
+      });
+
+      // ✅ 대기 모드에서도 overlay 표시 (선택 영역 확인용)
+      if (this.currentCrop && msg.data?.waitingMode) {
+        console.log('📍 [ContentMain] Showing crop overlay in waiting mode');
+        this.recordingOverlay.show(this.currentCrop);
+      }
+
+      this.sendViewportInfo();
+      return { success: true, cropSet: true };
 
       case MESSAGE_TYPES.UPDATE_PREFS:
         if (msg.data) {
@@ -1706,7 +1891,8 @@ class ContentMain {
         return { success: true };
 
       default:
-        return { success: false, error: 'Unknown message type' };
+        console.warn('⚠️ [ContentMain] Unknown message type:', msg.type);
+        return { success: true }; // ✅ 알 수 없는 메시지도 성공 응답
     }
   }
 
@@ -1740,26 +1926,50 @@ class ContentMain {
 
   cleanup() {
     console.log('🧹 [ContentMain] Cleanup called');
-    
-    // 모든 UI 요소 제거
-    if (this.areaSelector) {
-      this.areaSelector.hide();
-      this.areaSelector = null;
-    }
-    
-    if (this.dock) {
-      this.dock.hide();
-    }
-    
-    if (this.recordingOverlay) {
-      this.recordingOverlay.hide();
-    }
-    
-    // 상태 초기화
+
+    // ✅ 상태 먼저 초기화 (클릭 이벤트 차단)
     this.isRecording = false;
     this.currentCrop = null;
     this.elementZoomEnabled = false;
-    
+
+    // ✅ UI 요소 제거
+    if (this.areaSelector) {
+      try {
+        this.areaSelector.hide();
+      } catch (e) {
+        // Silently handle area selector cleanup errors
+      }
+      this.areaSelector = null;
+    }
+
+    if (this.dock) {
+      try {
+        this.dock.hide();
+      } catch (e) {
+        // Silently handle dock cleanup errors
+      }
+    }
+
+    if (this.recordingOverlay) {
+      try {
+        this.recordingOverlay.hide();
+      } catch (e) {
+        // Silently handle recording overlay cleanup errors
+      }
+    }
+
+    // 강제로 DOM에서 제거 (혹시 모를 경우 대비)
+    try {
+      const overlays = document.querySelectorAll('[id^="screen-recorder"]');
+      overlays.forEach(el => {
+        if (el && el.parentNode) {
+          el.parentNode.removeChild(el);
+        }
+      });
+    } catch (e) {
+      // Silently handle force remove errors
+    }
+
     console.log('✅ [ContentMain] Cleanup completed');
   }
 }
