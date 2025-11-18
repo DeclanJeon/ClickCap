@@ -292,7 +292,12 @@ class OffscreenRecorder {
       this.isGifMode = this.state.format === 'gif';
       this.isEncodingGif = false;
       this.gifEncodingProgress = 0;
-      
+
+      // GIF 모드 성능 안정화 (FPS 제한)
+      if (this.isGifMode) {
+        this.state.fps = Math.min(this.state.fps, 15);
+      }
+
       console.log('🎬 [Offscreen] Starting recording with settings:', {
         format: this.state.format,
         fps: this.state.fps,
@@ -583,7 +588,7 @@ class OffscreenRecorder {
         this.frameCount++;
         
         // 최대 프레임 수 제한 (메모리 보호)
-        const maxFrames = this.state.fps * 60; // 최대 60초
+        const maxFrames = this.state.fps * 30; // 최대 30초
         if (this.frameCount >= maxFrames) {
           console.warn('⚠️ [Offscreen] Max frames reached, stopping recording');
           this.stopRecording();
@@ -972,38 +977,3 @@ class OffscreenRecorder {
 
 const offscreenRecorder = new OffscreenRecorder();
 
-// ✅ 강제로 줌 테스트 (3초 후)
-setTimeout(() => {
-  console.log('🧪 [Offscreen] Testing zoom after 3 seconds...');
-  console.log('🧪 Current state:', {
-    hasVideo: !!offscreenRecorder.video,
-    videoSize: offscreenRecorder.video ? {
-      w: offscreenRecorder.video.videoWidth,
-      h: offscreenRecorder.video.videoHeight
-    } : null,
-    isRecording: !!offscreenRecorder.recorder,
-    zoomEnabled: offscreenRecorder.state.clickElementZoomEnabled,
-    hasCrop: !!offscreenRecorder.currentCrop
-  });
-
-  if (offscreenRecorder.video) {
-    const testZoomArea = {
-      x: 100,
-      y: 100,
-      width: 200,
-      height: 200,
-      scale: 1.5
-    };
-
-    console.log('🧪 Sending test zoom:', testZoomArea);
-
-    const result = offscreenRecorder.handleElementZoom({
-      zoomArea: testZoomArea,
-      timestamp: Date.now()
-    });
-
-    console.log('🧪 Test zoom result:', result);
-  } else {
-    console.log('🧪 No video ready for test');
-  }
-}, 3000);

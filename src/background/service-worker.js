@@ -271,8 +271,6 @@ class ServiceWorkerMain {
         return this.areaSelected(message.data);
       case 'start-area-recording': // 새로 추가
         return this.startAreaRecording();
-      case MESSAGE_TYPES.OFFSCREEN_READY:
-        return { success: true };
       case MESSAGE_TYPES.RECORDING_STATS:
         return this.forwardStats(message.data);
       case MESSAGE_TYPES.STOP_RECORDING:
@@ -439,18 +437,18 @@ class ServiceWorkerMain {
       viewRes = null;
     }
 
-    // 기본 view 값 설정
+    // 기본 view 값 설정 (Service Worker에서는 window 접근 불가하므로 고정 값 사용)
     const view = viewRes?.data || {
-      viewportWidth: window.innerWidth || 1920,
-      viewportHeight: window.innerHeight || 1080,
+      viewportWidth: 1920,
+      viewportHeight: 1080,
       dpr: 1,
       scrollX: 0,
       scrollY: 0,
       vvScale: 1,
       vvOffsetLeft: 0,
       vvOffsetTop: 0,
-      vvWidth: window.innerWidth || 1920,
-      vvHeight: window.innerHeight || 1080
+      vvWidth: 1920,
+      vvHeight: 1080
     };
 
     console.log(' [ServiceWorker] Full screen recording view:', view);
@@ -549,16 +547,16 @@ class ServiceWorkerMain {
     }
 
     const view = viewRes?.data || {
-      viewportWidth: window.innerWidth || 1920,
-      viewportHeight: window.innerHeight || 1080,
+      viewportWidth: 1920,
+      viewportHeight: 1080,
       dpr: 1,
       scrollX: 0,
       scrollY: 0,
       vvScale: 1,
       vvOffsetLeft: 0,
       vvOffsetTop: 0,
-      vvWidth: window.innerWidth || 1920,
-      vvHeight: window.innerHeight || 1080
+      vvWidth: 1920,
+      vvHeight: 1080
     };
 
     await this.startCapture({ cropArea: this.state.cropArea, view }, this.state.preferences);

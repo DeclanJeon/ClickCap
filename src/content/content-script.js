@@ -180,7 +180,7 @@ class AreaSelector {
       .overlay {
         position: fixed;
         inset: 0;
-        background: rgba(0, 0, 0, 0.5);
+        background: rgba(49,61,68,0.35);
         cursor: crosshair;
         z-index: 1;
       }
@@ -192,9 +192,9 @@ class AreaSelector {
 
       .selection-box {
         position: fixed;
-        border: 3px solid #ff0000;
-        background: rgba(255, 0, 0, 0.1);
-        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+        border: 2px solid #00668c;
+        background: rgba(113,196,239,0.12);
+        box-shadow: 0 0 0 9999px rgba(0,0,0,0.45);
         box-sizing: border-box;
         cursor: move;
         z-index: 2;
@@ -208,60 +208,61 @@ class AreaSelector {
 
       .resize-handle {
         position: absolute;
-        width: 16px;
-        height: 16px;
-        background: #ff0000;
-        border: 3px solid white;
+        width: 14px;
+        height: 14px;
+        background: #00668c;
+        border: 2px solid #fffefb;
         border-radius: 50%;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+        box-shadow: 0 3px 10px rgba(0,0,0,0.4);
         z-index: 3;
         pointer-events: auto;
+        transition: transform 0.15s ease, background 0.15s ease;
       }
 
       .resize-handle:hover {
-        transform: scale(1.3);
-        background: #ff3333;
+        transform: scale(1.25);
+        background: #71c4ef;
       }
 
       .resize-handle:active {
         transform: scale(1.1);
-        background: #cc0000;
       }
 
-      .resize-handle.nw { top: -8px; left: -8px; cursor: nw-resize; }
-      .resize-handle.ne { top: -8px; right: -8px; cursor: ne-resize; }
-      .resize-handle.sw { bottom: -8px; left: -8px; cursor: sw-resize; }
-      .resize-handle.se { bottom: -8px; right: -8px; cursor: se-resize; }
-      .resize-handle.n { top: -8px; left: 50%; margin-left: -8px; cursor: n-resize; }
-      .resize-handle.s { bottom: -8px; left: 50%; margin-left: -8px; cursor: s-resize; }
-      .resize-handle.w { top: 50%; left: -8px; margin-top: -8px; cursor: w-resize; }
-      .resize-handle.e { top: 50%; right: -8px; margin-top: -8px; cursor: e-resize; }
+      .resize-handle.nw { top: -7px; left: -7px; cursor: nw-resize; }
+      .resize-handle.ne { top: -7px; right: -7px; cursor: ne-resize; }
+      .resize-handle.sw { bottom: -7px; left: -7px; cursor: sw-resize; }
+      .resize-handle.se { bottom: -7px; right: -7px; cursor: se-resize; }
+      .resize-handle.n { top: -7px; left: 50%; margin-left: -7px; cursor: n-resize; }
+      .resize-handle.s { bottom: -7px; left: 50%; margin-left: -7px; cursor: s-resize; }
+      .resize-handle.w { top: 50%; left: -7px; margin-top: -7px; cursor: w-resize; }
+      .resize-handle.e { top: 50%; right: -7px; margin-top: -7px; cursor: e-resize; }
 
       .instructions {
         position: fixed;
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        background: rgba(0, 0, 0, 0.95);
-        color: white;
-        padding: 28px 40px;
-        border-radius: 12px;
+        background: rgba(255,254,251,0.96);
+        color: #1d1c1c;
+        padding: 22px 30px;
+        border-radius: 14px;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         text-align: center;
         z-index: 4;
         pointer-events: none;
+        box-shadow: 0 12px 30px rgba(0,0,0,0.25);
       }
 
       .instructions h3 {
-        margin-bottom: 16px;
-        font-size: 22px;
+        margin-bottom: 10px;
+        font-size: 17px;
         font-weight: 600;
       }
 
       .instructions p {
-        margin: 8px 0;
-        font-size: 16px;
-        opacity: 0.9;
+        margin: 4px 0;
+        font-size: 13px;
+        color: #313d44;
       }
 
       .instructions.hidden {
@@ -270,18 +271,19 @@ class AreaSelector {
 
       .adjustment-instructions {
         position: fixed;
-        top: 24px;
+        top: 20px;
         left: 50%;
         transform: translateX(-50%);
-        background: rgba(255, 0, 0, 0.95);
-        color: white;
-        padding: 18px 28px;
+        background: rgba(0,102,140,0.96);
+        color: #fffefb;
+        padding: 12px 20px;
         border-radius: 10px;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         text-align: center;
         z-index: 4;
         pointer-events: none;
         display: none;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.25);
       }
 
       .adjustment-instructions.visible {
@@ -289,23 +291,22 @@ class AreaSelector {
       }
 
       .adjustment-instructions p {
-        margin: 6px 0;
-        font-size: 15px;
-        font-weight: 500;
+        margin: 3px 0;
+        font-size: 12px;
       }
 
       .adjustment-instructions strong {
-        font-size: 17px;
+        font-size: 13px;
       }
 
       .coordinates {
         position: fixed;
-        background: rgba(0, 0, 0, 0.9);
-        color: #fff;
-        padding: 8px 14px;
+        background: rgba(49,61,68,0.95);
+        color: #fffefb;
+        padding: 6px 10px;
         border-radius: 6px;
         font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-        font-size: 13px;
+        font-size: 11px;
         font-weight: 600;
         z-index: 4;
         pointer-events: none;
@@ -315,19 +316,19 @@ class AreaSelector {
 
       .confirm-button {
         position: fixed;
-        bottom: 48px;
+        bottom: 32px;
         left: 50%;
         transform: translateX(-50%);
-        background: #ff0000;
-        color: white;
+        background: #00668c;
+        color: #fffefb;
         border: none;
-        padding: 18px 56px;
+        padding: 12px 32px;
         border-radius: 10px;
-        font-size: 18px;
-        font-weight: 700;
+        font-size: 14px;
+        font-weight: 600;
         cursor: pointer;
-        box-shadow: 0 6px 20px rgba(255, 0, 0, 0.5);
-        transition: all 0.2s;
+        box-shadow: 0 8px 20px rgba(0,102,140,0.5);
+        transition: all 0.15s ease;
         z-index: 4;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         pointer-events: auto;
@@ -335,13 +336,13 @@ class AreaSelector {
       }
 
       .confirm-button:hover {
-        background: #cc0000;
-        transform: translateX(-50%) translateY(-3px);
-        box-shadow: 0 8px 24px rgba(255, 0, 0, 0.6);
+        background: #00506f;
+        transform: translateX(-50%) translateY(-1px);
+        box-shadow: 0 11px 26px rgba(0,102,140,0.55);
       }
 
       .confirm-button:active {
-        transform: translateX(-50%) translateY(-1px);
+        transform: translateX(-50%) translateY(0);
       }
 
       .confirm-button.visible {
@@ -369,23 +370,23 @@ class AreaSelector {
     this.instructions = document.createElement('div');
     this.instructions.className = 'instructions';
     this.instructions.innerHTML = `
-      <h3>📹 녹화 영역 선택</h3>
-      <p>드래그하여 녹화할 영역을 선택하세요</p>
-      <p><strong>ESC</strong> 키를 눌러 취소</p>
+      <h3>캡처할 영역을 선택하세요</h3>
+      <p>마우스로 드래그해서 녹화할 구간을 지정할 수 있습니다.</p>
+      <p><strong>ESC</strong> 키를 눌러 취소할 수 있습니다.</p>
     `;
 
     this.adjustmentInstructions = document.createElement('div');
     this.adjustmentInstructions.className = 'adjustment-instructions';
     this.adjustmentInstructions.innerHTML = `
-      <p><strong>✨ 영역 수정 모드</strong></p>
-      <p>• 빨간 영역을 클릭하고 드래그하여 위치 이동</p>
-      <p>• 빨간 점을 드래그하여 크기 조절</p>
-      <p>• 아래 버튼을 눌러 확정</p>
+      <p><strong>영역 미세 조정</strong></p>
+      <p>테두리를 드래그해서 크기를 조정할 수 있어요.</p>
+      <p>영역 안을 드래그하면 위치를 옮길 수 있습니다.</p>
+      <p>하단 버튼을 눌러 이 영역으로 녹화를 시작하세요.</p>
     `;
 
     this.confirmButton = document.createElement('button');
     this.confirmButton.className = 'confirm-button';
-    this.confirmButton.textContent = '✓ 이 영역으로 확정';
+    this.confirmButton.textContent = '이 영역으로 녹화 시작';
 
     this.coordinates = document.createElement('div');
     this.coordinates.className = 'coordinates';
@@ -726,91 +727,98 @@ class Dock {
     
     const style = document.createElement('style');
     style.textContent = `
-      * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
+      :host {
+        all: initial;
       }
 
       .dock {
         display: flex;
         gap: 12px;
         align-items: center;
-        padding: 12px 16px;
+        padding: 10px 14px;
         border-radius: 12px;
-        background: rgba(0, 0, 0, 0.95);
-        color: white;
+        background: rgba(255,254,251,0.98);
+        color: #1d1c1c;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        font-size: 13px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-        backdrop-filter: blur(10px);
+        font-size: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.16);
+        backdrop-filter: blur(8px);
         user-select: none;
       }
 
       .recording-indicator {
-        width: 8px;
-        height: 8px;
-        background: #ff0000;
+        width: 10px;
+        height: 10px;
+        background: #00668c;
         border-radius: 50%;
-        animation: pulse 1.5s ease-in-out infinite;
+        box-shadow: 0 0 0 4px rgba(0,102,140,0.25);
+        animation: pulse 1.4s ease-in-out infinite;
         flex-shrink: 0;
       }
 
-      @keyframes pulse {
-        0%, 100% { opacity: 1; transform: scale(1); }
-        50% { opacity: 0.5; transform: scale(1.2); }
-      }
-
       .recording-indicator.paused {
-        background: #ffa500;
+        background: #b6ccd8;
+        box-shadow: 0 0 0 4px rgba(182,204,216,0.4);
         animation: none;
       }
 
       .recording-indicator.waiting {
-        background: #4CAF50;
+        background: #71c4ef;
+        box-shadow: 0 0 0 4px rgba(113,196,239,0.25);
         animation: none;
+      }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.6; transform: scale(1.25); }
       }
 
       .stats {
         display: flex;
-        gap: 12px;
-        min-width: 120px;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 110px;
       }
 
       .stat {
         font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-        font-size: 12px;
+        font-size: 11px;
         white-space: nowrap;
+        color: #313d44;
       }
 
       .divider {
         width: 1px;
-        height: 24px;
-        background: rgba(255, 255, 255, 0.2);
+        height: 28px;
+        background: #cccbc8;
         flex-shrink: 0;
       }
 
       .btn {
-        background: rgba(255, 255, 255, 0.12);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        color: white;
-        padding: 6px 12px;
+        background: #d4eaf7;
+        border: 1px solid #b6ccd8;
+        color: #1d1c1c;
+        padding: 6px 10px;
         border-radius: 6px;
         cursor: pointer;
         font-size: 11px;
         font-weight: 500;
-        transition: all 0.2s;
+        transition: all 0.15s ease;
         white-space: nowrap;
         flex-shrink: 0;
       }
 
       .btn:hover {
-        background: rgba(255, 255, 255, 0.2);
+        background: #71c4ef;
+        border-color: #00668c;
+        color: #fffefb;
         transform: translateY(-1px);
+        box-shadow: 0 3px 8px rgba(0,102,140,0.25);
       }
 
       .btn:active {
         transform: translateY(0);
+        box-shadow: none;
       }
 
       .btn.hidden {
@@ -818,37 +826,30 @@ class Dock {
       }
 
       .btn.start-btn {
-        background: rgba(76, 175, 80, 0.3);
-        border-color: rgba(76, 175, 80, 0.5);
+        background: #00668c;
+        border-color: #00668c;
+        color: #fffefb;
+        padding: 7px 14px;
         font-size: 12px;
-        padding: 8px 16px;
       }
 
       .btn.start-btn:hover {
-        background: rgba(76, 175, 80, 0.4);
+        background: #00506f;
       }
 
       .btn.pause-btn {
-        background: rgba(255, 165, 0, 0.2);
-        border-color: rgba(255, 165, 0, 0.4);
-      }
-
-      .btn.pause-btn:hover {
-        background: rgba(255, 165, 0, 0.3);
+        background: #fffefb;
       }
 
       .btn.stop-btn {
-        background: rgba(255, 0, 0, 0.2);
-        border-color: rgba(255, 0, 0, 0.4);
-      }
-
-      .btn.stop-btn:hover {
-        background: rgba(255, 0, 0, 0.3);
+        background: #d9534f;
+        border-color: #d9534f;
+        color: #fffefb;
       }
 
       .group {
         display: flex;
-        gap: 8px;
+        gap: 6px;
         align-items: center;
       }
 
@@ -863,70 +864,60 @@ class Dock {
         align-items: center;
         cursor: pointer;
         padding: 4px 8px;
-        border-radius: 4px;
-        background: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        transition: all 0.2s;
-        font-size: 14px;
+        border-radius: 6px;
+        background: #f5f4f1;
+        border: 1px solid #cccbc8;
+        transition: all 0.15s ease;
+        font-size: 12px;
+        color: #313d44;
       }
 
       .zoom-toggle:hover {
-        background: rgba(255, 255, 255, 0.15);
+        background: #d4eaf7;
       }
 
       .zoom-toggle.active {
-        background: rgba(138, 43, 226, 0.3);
-        border-color: rgba(138, 43, 226, 0.5);
+        background: #71c4ef;
+        border-color: #00668c;
+        color: #fffefb;
       }
 
       .zoom-select {
-        padding: 5px 24px 5px 10px;
-        border-radius: 4px;
-        background: rgba(30, 30, 30, 0.95);
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        color: #ffffff;
+        padding: 4px 22px 4px 8px;
+        border-radius: 6px;
+        background: #fffefb;
+        border: 1px solid #cccbc8;
+        color: #1d1c1c;
         font-size: 11px;
         font-weight: 500;
         cursor: pointer;
         outline: none;
         appearance: none;
-        background-image: url('data:image/svg+xml;utf8,<svg fill="white" height="12" viewBox="0 0 16 16" width="12" xmlns="http://www.w3.org/2000/svg"><path d="M4 6l4 4 4-4z"/></svg>');
+        background-image: url('data:image/svg+xml;utf8,<svg fill="%23313d44" height="12" viewBox="0 0 16 16" width="12" xmlns="http://www.w3.org/2000/svg"><path d="M4 6l4 4 4-4z"/></svg>');
         background-repeat: no-repeat;
         background-position: right 6px center;
-        transition: all 0.2s;
+        transition: all 0.15s ease;
         min-width: 60px;
       }
 
       .zoom-select:hover {
-        background-color: rgba(50, 50, 50, 0.95);
-        border-color: rgba(255, 255, 255, 0.5);
+        border-color: #00668c;
       }
 
       .zoom-select:focus {
-        border-color: rgba(138, 43, 226, 0.8);
-        box-shadow: 0 0 0 2px rgba(138, 43, 226, 0.2);
+        border-color: #00668c;
+        box-shadow: 0 0 0 2px rgba(0,102,140,0.18);
       }
 
       .zoom-select:disabled {
-        opacity: 0.4;
+        opacity: 0.45;
         cursor: not-allowed;
-        background-color: rgba(30, 30, 30, 0.5);
-      }
-
-      /* Select 드롭다운 옵션 스타일 */
-      .zoom-select option {
-        background: #2a2a2a;
-        color: #ffffff;
-        padding: 8px;
-      }
-
-      .zoom-select option:hover {
-        background: #3a3a3a;
+        background-color: #f5f4f1;
       }
 
       .zoom-label {
         font-size: 10px;
-        color: rgba(255, 255, 255, 0.7);
+        color: #313d44;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         margin-right: 4px;
@@ -936,36 +927,36 @@ class Dock {
       .encoding-progress {
         display: flex;
         flex-direction: column;
-        gap: 4px;
-        min-width: 150px;
+        gap: 3px;
+        min-width: 130px;
       }
 
       .encoding-label {
         font-size: 11px;
-        color: rgba(255, 255, 255, 0.8);
+        color: #313d44;
         font-weight: 500;
       }
 
       .encoding-bar {
         width: 100%;
-        height: 8px;
-        background: rgba(255, 255, 255, 0.1);
+        height: 6px;
+        background: #f5f4f1;
         border-radius: 4px;
         overflow: hidden;
       }
 
       .encoding-fill {
         height: 100%;
-        background: linear-gradient(90deg, #4CAF50, #8BC34A);
+        background: linear-gradient(90deg, #71c4ef, #00668c);
         border-radius: 4px;
-        transition: width 0.3s ease;
+        transition: width 0.25s ease;
         width: 0%;
       }
 
       .encoding-percent {
         font-size: 10px;
-        color: rgba(255, 255, 255, 0.7);
-        text-align: center;
+        color: #313d44;
+        text-align: right;
         font-weight: 600;
       }
     `;
