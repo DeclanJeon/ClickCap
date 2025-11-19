@@ -171,182 +171,96 @@ class AreaSelector {
 
     const style = document.createElement('style');
     style.textContent = `
-      * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
 
+      /* Overlay: Must have pointer-events: auto to catch clicks */
       .overlay {
-        position: fixed;
-        inset: 0;
-        background: rgba(49,61,68,0.35);
+        position: fixed; inset: 0;
+        background: rgba(11, 14, 20, 0.4); /* Darker for space feel */
+        backdrop-filter: blur(2px);
         cursor: crosshair;
         z-index: 1;
+        pointer-events: auto;
       }
+      .overlay.adjusting { cursor: default; pointer-events: none; }
 
-      .overlay.adjusting {
-        cursor: default;
-        pointer-events: none;
-      }
-
+      /* Selection Box: Must be position: fixed */
       .selection-box {
         position: fixed;
-        border: 2px solid #00668c;
-        background: rgba(113,196,239,0.12);
-        box-shadow: 0 0 0 9999px rgba(0,0,0,0.45);
-        box-sizing: border-box;
+        border: 1px solid #00F0FF; /* Cyan Neon */
+        background: rgba(0, 240, 255, 0.1);
+        box-shadow: 0 0 20px rgba(0, 240, 255, 0.2), inset 0 0 20px rgba(0, 240, 255, 0.1);
         cursor: move;
         z-index: 2;
         pointer-events: auto;
-        display: none;
+        display: none; /* Hidden by default */
       }
+      .selection-box.visible { display: block; }
 
-      .selection-box.visible {
-        display: block;
+      /* Corner Brackets Effect */
+      .selection-box::before, .selection-box::after {
+        content: ''; position: absolute; width: 8px; height: 8px;
+        border: 2px solid #fff; transition: all 0.2s;
       }
+      .selection-box::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
+      .selection-box::after { bottom: -1px; right: -1px; border-left: none; border-top: none; }
 
+      /* Resize Handles */
       .resize-handle {
-        position: absolute;
-        width: 14px;
-        height: 14px;
-        background: #00668c;
-        border: 2px solid #fffefb;
-        border-radius: 50%;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.4);
-        z-index: 3;
-        pointer-events: auto;
-        transition: transform 0.15s ease, background 0.15s ease;
+        position: absolute; width: 10px; height: 10px;
+        background: #0B0E14; border: 2px solid #00F0FF;
+        box-shadow: 0 0 5px #00F0FF;
+        z-index: 3; pointer-events: auto;
       }
+      .resize-handle:hover { transform: scale(1.2); background: #00F0FF; }
+      
+      /* Handle Positions */
+      .resize-handle.nw { top: -6px; left: -6px; cursor: nw-resize; }
+      .resize-handle.ne { top: -6px; right: -6px; cursor: ne-resize; }
+      .resize-handle.sw { bottom: -6px; left: -6px; cursor: sw-resize; }
+      .resize-handle.se { bottom: -6px; right: -6px; cursor: se-resize; }
+      .resize-handle.n { top: -6px; left: 50%; margin-left: -5px; cursor: n-resize; }
+      .resize-handle.s { bottom: -6px; left: 50%; margin-left: -5px; cursor: s-resize; }
+      .resize-handle.w { top: 50%; left: -6px; margin-top: -5px; cursor: w-resize; }
+      .resize-handle.e { top: 50%; right: -6px; margin-top: -5px; cursor: e-resize; }
 
-      .resize-handle:hover {
-        transform: scale(1.25);
-        background: #71c4ef;
+      /* Instructions HUD */
+      .instructions, .adjustment-instructions {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background: rgba(11, 14, 20, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #EAECEF; padding: 20px 30px; border-radius: 8px;
+        text-align: center; z-index: 4; pointer-events: none;
+        font-family: 'Segoe UI', sans-serif;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
       }
+      .adjustment-instructions { top: 40px; transform: translateX(-50%); display: none; }
+      .adjustment-instructions.visible { display: block; }
+      .instructions.hidden { display: none; }
+      
+      h3 { color: #00F0FF; margin-bottom: 8px; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; }
+      p { font-size: 13px; margin: 4px 0; color: #8B9BB4; }
 
-      .resize-handle:active {
-        transform: scale(1.1);
-      }
-
-      .resize-handle.nw { top: -7px; left: -7px; cursor: nw-resize; }
-      .resize-handle.ne { top: -7px; right: -7px; cursor: ne-resize; }
-      .resize-handle.sw { bottom: -7px; left: -7px; cursor: sw-resize; }
-      .resize-handle.se { bottom: -7px; right: -7px; cursor: se-resize; }
-      .resize-handle.n { top: -7px; left: 50%; margin-left: -7px; cursor: n-resize; }
-      .resize-handle.s { bottom: -7px; left: 50%; margin-left: -7px; cursor: s-resize; }
-      .resize-handle.w { top: 50%; left: -7px; margin-top: -7px; cursor: w-resize; }
-      .resize-handle.e { top: 50%; right: -7px; margin-top: -7px; cursor: e-resize; }
-
-      .instructions {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background: rgba(255,254,251,0.96);
-        color: #1d1c1c;
-        padding: 22px 30px;
-        border-radius: 14px;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        text-align: center;
-        z-index: 4;
-        pointer-events: none;
-        box-shadow: 0 12px 30px rgba(0,0,0,0.25);
-      }
-
-      .instructions h3 {
-        margin-bottom: 10px;
-        font-size: 17px;
-        font-weight: 600;
-      }
-
-      .instructions p {
-        margin: 4px 0;
-        font-size: 13px;
-        color: #313d44;
-      }
-
-      .instructions.hidden {
-        display: none;
-      }
-
-      .adjustment-instructions {
-        position: fixed;
-        top: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: rgba(0,102,140,0.96);
-        color: #fffefb;
-        padding: 12px 20px;
-        border-radius: 10px;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        text-align: center;
-        z-index: 4;
-        pointer-events: none;
-        display: none;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.25);
-      }
-
-      .adjustment-instructions.visible {
-        display: block;
-      }
-
-      .adjustment-instructions p {
-        margin: 3px 0;
-        font-size: 12px;
-      }
-
-      .adjustment-instructions strong {
-        font-size: 13px;
-      }
-
-      .coordinates {
-        position: fixed;
-        background: rgba(49,61,68,0.95);
-        color: #fffefb;
-        padding: 6px 10px;
-        border-radius: 6px;
-        font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-        font-size: 11px;
-        font-weight: 600;
-        z-index: 4;
-        pointer-events: none;
-        display: none;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.4);
-      }
-
+      /* Confirm Button */
       .confirm-button {
-        position: fixed;
-        bottom: 32px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: #00668c;
-        color: #fffefb;
-        border: none;
-        padding: 12px 32px;
-        border-radius: 10px;
-        font-size: 14px;
-        font-weight: 600;
-        cursor: pointer;
-        box-shadow: 0 8px 20px rgba(0,102,140,0.5);
-        transition: all 0.15s ease;
-        z-index: 4;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        pointer-events: auto;
-        display: none;
+        position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+        background: #00F0FF; color: #0B0E14; border: none;
+        padding: 12px 32px; border-radius: 4px;
+        font-size: 14px; font-weight: 800; letter-spacing: 1px;
+        cursor: pointer; box-shadow: 0 0 20px rgba(0, 240, 255, 0.4);
+        z-index: 4; pointer-events: auto; display: none;
+        transition: transform 0.2s;
       }
+      .confirm-button:hover { transform: translateX(-50%) scale(1.05); background: #fff; }
+      .confirm-button.visible { display: block; }
 
-      .confirm-button:hover {
-        background: #00506f;
-        transform: translateX(-50%) translateY(-1px);
-        box-shadow: 0 11px 26px rgba(0,102,140,0.55);
-      }
-
-      .confirm-button:active {
-        transform: translateX(-50%) translateY(0);
-      }
-
-      .confirm-button.visible {
-        display: block;
+      /* Coordinates HUD */
+      .coordinates {
+        position: fixed; background: rgba(11, 14, 20, 0.9);
+        border: 1px solid rgba(0, 240, 255, 0.3);
+        color: #00F0FF; padding: 4px 8px; border-radius: 4px;
+        font-family: 'Courier New', monospace; font-size: 11px;
+        z-index: 4; pointer-events: none; display: none;
       }
     `;
 
@@ -731,40 +645,44 @@ class Dock {
         all: initial;
       }
 
+      /* Dock - Floating Space Capsule */
       .dock {
         display: flex;
-        gap: 12px;
+        gap: 16px;
         align-items: center;
-        padding: 10px 14px;
-        border-radius: 12px;
-        background: rgba(255,254,251,0.98);
-        color: #1d1c1c;
+        padding: 12px 20px;
+        border-radius: 50px; /* Capsule shape */
+        background: rgba(11, 14, 20, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        backdrop-filter: blur(16px);
+        color: #EAECEF;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        transition: all 0.3s ease;
         font-size: 12px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.16);
-        backdrop-filter: blur(8px);
         user-select: none;
       }
 
+      /* Recording Indicator - The Red Eye */
       .recording-indicator {
+        background: #FF2A6D;
+        box-shadow: 0 0 10px #FF2A6D;
         width: 10px;
         height: 10px;
-        background: #00668c;
         border-radius: 50%;
-        box-shadow: 0 0 0 4px rgba(0,102,140,0.25);
-        animation: pulse 1.4s ease-in-out infinite;
         flex-shrink: 0;
+        animation: pulse 1.4s ease-in-out infinite;
       }
 
       .recording-indicator.paused {
-        background: #b6ccd8;
-        box-shadow: 0 0 0 4px rgba(182,204,216,0.4);
-        animation: none;
+        background: #FFD700;
+        box-shadow: none;
+        animation: pulse 2s infinite;
       }
 
       .recording-indicator.waiting {
-        background: #71c4ef;
-        box-shadow: 0 0 0 4px rgba(113,196,239,0.25);
+        background: #00F0FF;
+        box-shadow: 0 0 10px #00F0FF;
         animation: none;
       }
 
@@ -773,6 +691,7 @@ class Dock {
         50% { opacity: 0.6; transform: scale(1.25); }
       }
 
+      /* Stats - Monospace Data */
       .stats {
         display: flex;
         flex-direction: column;
@@ -781,44 +700,38 @@ class Dock {
       }
 
       .stat {
-        font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-        font-size: 11px;
+        font-family: 'JetBrains Mono', 'Courier New', monospace;
+        color: #00F0FF;
+        font-size: 12px;
+        text-shadow: 0 0 5px rgba(0, 240, 255, 0.3);
         white-space: nowrap;
-        color: #313d44;
       }
 
-      .divider {
-        width: 1px;
-        height: 28px;
-        background: #cccbc8;
-        flex-shrink: 0;
-      }
-
+      /* Buttons - Minimalist Icons */
       .btn {
-        background: #d4eaf7;
-        border: 1px solid #b6ccd8;
-        color: #1d1c1c;
-        padding: 6px 10px;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 11px;
-        font-weight: 500;
-        transition: all 0.15s ease;
-        white-space: nowrap;
+        background: transparent;
+        border: 1px solid rgba(255,255,255,0.2);
+        color: #fff;
+        border-radius: 50%;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        transition: all 0.2s;
         flex-shrink: 0;
+        font-size: 14px;
       }
 
       .btn:hover {
-        background: #71c4ef;
-        border-color: #00668c;
-        color: #fffefb;
-        transform: translateY(-1px);
-        box-shadow: 0 3px 8px rgba(0,102,140,0.25);
+        background: rgba(255,255,255,0.1);
+        border-color: #fff;
+        transform: scale(1.1);
       }
 
       .btn:active {
-        transform: translateY(0);
-        box-shadow: none;
+        transform: scale(0.95);
       }
 
       .btn.hidden {
@@ -826,25 +739,48 @@ class Dock {
       }
 
       .btn.start-btn {
-        background: #00668c;
-        border-color: #00668c;
-        color: #fffefb;
-        padding: 7px 14px;
-        font-size: 12px;
+        border-color: #00F0FF;
+        color: #00F0FF;
+        width: auto;
+        padding: 0 12px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 600;
       }
 
       .btn.start-btn:hover {
-        background: #00506f;
+        background: #00F0FF;
+        color: #000;
+        box-shadow: 0 0 15px #00F0FF;
       }
 
       .btn.pause-btn {
-        background: #fffefb;
+        border-color: #FFD700;
+        color: #FFD700;
+      }
+
+      .btn.pause-btn:hover {
+        background: #FFD700;
+        color: #000;
+        box-shadow: 0 0 15px #FFD700;
       }
 
       .btn.stop-btn {
-        background: #d9534f;
-        border-color: #d9534f;
-        color: #fffefb;
+        border-color: #FF2A6D;
+        color: #FF2A6D;
+      }
+
+      .btn.stop-btn:hover {
+        background: #FF2A6D;
+        color: #000;
+        box-shadow: 0 0 15px #FF2A6D;
+      }
+
+      .divider {
+        background: rgba(255,255,255,0.1);
+        width: 1px;
+        height: 28px;
+        flex-shrink: 0;
       }
 
       .group {
@@ -860,40 +796,41 @@ class Dock {
       }
 
       .zoom-toggle {
+        background: rgba(0, 240, 255, 0.1);
+        border: 1px solid rgba(0, 240, 255, 0.2);
+        color: #00F0FF;
+        border-radius: 20px;
+        padding: 4px 8px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.15s ease;
         display: flex;
         align-items: center;
-        cursor: pointer;
-        padding: 4px 8px;
-        border-radius: 6px;
-        background: #f5f4f1;
-        border: 1px solid #cccbc8;
-        transition: all 0.15s ease;
-        font-size: 12px;
-        color: #313d44;
       }
 
       .zoom-toggle:hover {
-        background: #d4eaf7;
+        background: rgba(0, 240, 255, 0.2);
+        border-color: #00F0FF;
       }
 
       .zoom-toggle.active {
-        background: #71c4ef;
-        border-color: #00668c;
-        color: #fffefb;
+        background: #00F0FF;
+        color: #000;
+        box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
       }
 
       .zoom-select {
         padding: 4px 22px 4px 8px;
         border-radius: 6px;
-        background: #fffefb;
-        border: 1px solid #cccbc8;
-        color: #1d1c1c;
+        background: rgba(11, 14, 20, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #EAECEF;
         font-size: 11px;
         font-weight: 500;
         cursor: pointer;
         outline: none;
         appearance: none;
-        background-image: url('data:image/svg+xml;utf8,<svg fill="%23313d44" height="12" viewBox="0 0 16 16" width="12" xmlns="http://www.w3.org/2000/svg"><path d="M4 6l4 4 4-4z"/></svg>');
+        background-image: url('data:image/svg+xml;utf8,<svg fill="%2300F0FF" height="12" viewBox="0 0 16 16" width="12" xmlns="http://www.w3.org/2000/svg"><path d="M4 6l4 4 4-4z"/></svg>');
         background-repeat: no-repeat;
         background-position: right 6px center;
         transition: all 0.15s ease;
@@ -901,23 +838,23 @@ class Dock {
       }
 
       .zoom-select:hover {
-        border-color: #00668c;
+        border-color: #00F0FF;
       }
 
       .zoom-select:focus {
-        border-color: #00668c;
-        box-shadow: 0 0 0 2px rgba(0,102,140,0.18);
+        border-color: #00F0FF;
+        box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.18);
       }
 
       .zoom-select:disabled {
         opacity: 0.45;
         cursor: not-allowed;
-        background-color: #f5f4f1;
+        background-color: rgba(11, 14, 20, 0.5);
       }
 
       .zoom-label {
         font-size: 10px;
-        color: #313d44;
+        color: #8B9BB4;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         margin-right: 4px;
@@ -933,21 +870,21 @@ class Dock {
 
       .encoding-label {
         font-size: 11px;
-        color: #313d44;
+        color: #EAECEF;
         font-weight: 500;
       }
 
       .encoding-bar {
         width: 100%;
         height: 6px;
-        background: #f5f4f1;
+        background: rgba(255, 255, 255, 0.1);
         border-radius: 4px;
         overflow: hidden;
       }
 
       .encoding-fill {
         height: 100%;
-        background: linear-gradient(90deg, #71c4ef, #00668c);
+        background: linear-gradient(90deg, #00F0FF, #BC13FE);
         border-radius: 4px;
         transition: width 0.25s ease;
         width: 0%;
@@ -955,7 +892,7 @@ class Dock {
 
       .encoding-percent {
         font-size: 10px;
-        color: #313d44;
+        color: #EAECEF;
         text-align: right;
         font-weight: 600;
       }
@@ -1017,7 +954,7 @@ class Dock {
     // Start button (for area selection mode)
     this.startBtn = document.createElement('button');
     this.startBtn.className = 'btn start-btn hidden';
-    this.startBtn.textContent = '🎬 녹화 시작';
+    this.startBtn.textContent = 'START';
     
     this.pauseBtn = document.createElement('button');
     this.pauseBtn.className = 'btn pause-btn';
@@ -1039,14 +976,14 @@ class Dock {
     
     this.zoomToggle = document.createElement('div');
     this.zoomToggle.className = 'zoom-toggle active';
-    this.zoomToggle.textContent = '🎯';
-    this.zoomToggle.title = '클릭 줌 켜기/끄기';
+    this.zoomToggle.textContent = 'AUTO-ZOOM';
+    this.zoomToggle.title = 'Toggle Click Zoom';
     
     const scaleWrapper = document.createElement('div');
     scaleWrapper.className = 'group';
     const scaleLabel = document.createElement('span');
     scaleLabel.className = 'zoom-label';
-    scaleLabel.textContent = '배율';
+    scaleLabel.textContent = 'SCALE';
     
     this.zoomScaleSelect = document.createElement('select');
     this.zoomScaleSelect.className = 'zoom-select';
@@ -1069,7 +1006,7 @@ class Dock {
     durationWrapper.className = 'group';
     const durationLabel = document.createElement('span');
     durationLabel.className = 'zoom-label';
-    durationLabel.textContent = '지속';
+    durationLabel.textContent = 'DURATION';
     
     this.zoomDurationSelect = document.createElement('select');
     this.zoomDurationSelect.className = 'zoom-select';
@@ -1676,6 +1613,9 @@ class ContentMain {
     scale: this.elementZoomScale || 1.5
   };
 
+  // ✅ 클릭 피드백 애니메이션 추가
+  this.showClickRipple(clickX, clickY);
+
   // ✅ 직접 메시지 전송 (safeSend 우회)
   chrome.runtime.sendMessage({
     type: MESSAGE_TYPES.ELEMENT_CLICKED_ZOOM,
@@ -1692,6 +1632,28 @@ class ContentMain {
       return;
     }
   });
+  }
+
+  // ✅ 클릭 피드백 애니메이션 메서드
+  showClickRipple(x, y) {
+    const ripple = document.createElement('div');
+    ripple.style.cssText = `
+      position: fixed; left: ${x}px; top: ${y}px;
+      width: 10px; height: 10px; border-radius: 50%;
+      background: rgba(0, 240, 255, 0.6);
+      box-shadow: 0 0 20px #00F0FF;
+      transform: translate(-50%, -50%) scale(1);
+      pointer-events: none; z-index: 999999;
+      transition: transform 0.5s ease-out, opacity 0.5s ease-out;
+    `;
+    document.body.appendChild(ripple);
+    
+    requestAnimationFrame(() => {
+      ripple.style.transform = 'translate(-50%, -50%) scale(5)';
+      ripple.style.opacity = '0';
+    });
+    
+    setTimeout(() => ripple.remove(), 500);
   }
 
   async route(msg) {

@@ -2,139 +2,124 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>ClickCap</title>
+  <title>ClickCap Commander</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="container">
+  <div class="universe">
+    <div class="stars"></div>
+
     <header>
-      <div class="logo">
-        <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-          <circle cx="16" cy="16" r="14" fill="#ff0000" opacity="0.2"></circle>
-          <circle cx="16" cy="16" r="8" fill="#ff0000"></circle>
-        </svg>
+      <div class="brand">
+        <div class="logo-orb">
+          <div class="core"></div>
+        </div>
         <h1>ClickCap</h1>
       </div>
-      <div class="header-controls">
-        <div class="status" id="status">
-          <span class="status-dot"></span>
-          <span class="status-text">Ready</span>
-        </div>
+      <div class="status-badge ready">
+        <span class="beacon"></span> SYSTEM READY
       </div>
     </header>
+
     <main>
-      <section class="recording-mode">
-        <h2>Recording Mode</h2>
-        <div class="mode-options">
-          <label class="mode-option">
-            <input type="radio" name="mode" value="full-screen" checked>
-            <div class="mode-card">
-              <div class="mode-label">Full Screen</div>
-              <div class="mode-description">Record entire browser tab</div>
-            </div>
-          </label>
-          <label class="mode-option">
-            <input type="radio" name="mode" value="area">
-            <div class="mode-card">
-              <div class="mode-label">Area Selection</div>
-              <div class="mode-description">Select specific region</div>
-            </div>
-          </label>
-        </div>
-      </section>
-      
-      <section class="settings">
-        <h2>Settings</h2>
+      <!-- Mode Selection -->
+      <section class="mission-select">
+        <label class="mission-card">
+          <input type="radio" name="mode" value="full-screen" checked>
+          <div class="card-content">
+            <div class="icon-scan"></div>
+            <span class="label">Full Sector</span>
+            <span class="desc">Entire Viewport</span>
+          </div>
+          <div class="selection-glow"></div>
+        </label>
         
-        <div class="setting-group">
+        <label class="mission-card">
+          <input type="radio" name="mode" value="area">
+          <div class="card-content">
+            <div class="icon-target"></div>
+            <span class="label">Target Area</span>
+            <span class="desc">Select Region</span>
+          </div>
+          <div class="selection-glow"></div>
+        </label>
+      </section>
+
+      <!-- Settings Panel -->
+      <section class="control-panel">
+        <div class="setting-row">
           <label for="format">Output Format</label>
-          <select id="format">
+          <select id="format" class="cyber-select">
             <option value="webm" selected>WebM (Video)</option>
             <option value="gif">GIF (Animation)</option>
           </select>
         </div>
         
-        <div class="setting-group" id="qualityGroup">
-          <label for="quality">Video Quality</label>
-          <select id="quality">
+        <!-- Dynamic Groups (IDs must match popup.js) -->
+        <div class="setting-row" id="qualityGroup">
+          <label for="quality">Quality</label>
+          <select id="quality" class="cyber-select">
             <option value="LOW">Low (2 Mbps)</option>
             <option value="MEDIUM">Medium (5 Mbps)</option>
             <option value="HIGH" selected>High (8 Mbps)</option>
             <option value="ULTRA">Ultra (15 Mbps)</option>
           </select>
         </div>
-        
-        <div class="setting-group" id="fpsGroup">
-          <label for="fps">FPS</label>
-          <select id="fps">
-            <option value="10">10 FPS (GIF recommended)</option>
+
+        <div class="setting-row" id="fpsGroup">
+          <label for="fps">Frame Rate</label>
+          <select id="fps" class="cyber-select">
+            <option value="10">10 FPS</option>
             <option value="15">15 FPS</option>
-            <option value="24">24 FPS</option>
             <option value="30" selected>30 FPS</option>
             <option value="60">60 FPS</option>
           </select>
         </div>
-        
-        <div class="setting-group" id="gifQualityGroup" style="display: none;">
+
+        <div class="setting-row hidden" id="gifQualityGroup">
           <label for="gifQuality">GIF Quality</label>
-          <select id="gifQuality">
-            <option value="1">Best (Slowest)</option>
+          <select id="gifQuality" class="cyber-select">
             <option value="10" selected>High</option>
             <option value="20">Medium</option>
-            <option value="30">Low (Fastest)</option>
           </select>
         </div>
-        
-        <div class="setting-group" id="gifSizeGroup" style="display: none;">
+
+        <div class="setting-row hidden" id="gifSizeGroup">
           <label for="gifMaxWidth">GIF Max Width</label>
-          <select id="gifMaxWidth">
-            <option value="320">320px (Small)</option>
-            <option value="480" selected>480px (Medium)</option>
-            <option value="640">640px (Large)</option>
-            <option value="800">800px (Extra Large)</option>
+          <select id="gifMaxWidth" class="cyber-select">
+            <option value="480" selected>480px</option>
+            <option value="800">800px</option>
           </select>
         </div>
-        
-        <div class="setting-group checkbox-group" id="audioGroup">
-          <label>
+
+        <div class="setting-row checkbox-row" id="audioGroup">
+          <label class="cyber-checkbox">
             <input type="checkbox" id="includeAudio" checked>
-            <span>Include Audio</span>
+            <span class="checkmark"></span>
+            <span class="text">Include Audio</span>
           </label>
         </div>
-        
-        <div class="setting-group checkbox-group">
-          <label>
+
+        <div class="setting-row checkbox-row">
+          <label class="cyber-checkbox">
             <input type="checkbox" id="showDock" checked>
-            <span>Show Recording Dock</span>
+            <span class="checkmark"></span>
+            <span class="text">Show HUD Dock</span>
           </label>
         </div>
       </section>
-      
-      <section class="actions">
-        <button id="startBtn" class="btn btn-primary">
-          <span class="btn-text">Start Recording</span>
+
+      <!-- Action Buttons -->
+      <div class="launch-pad">
+        <button id="startBtn" class="btn-launch">
+          <span class="btn-content">INITIALIZE RECORDING</span>
         </button>
-        <button id="stopBtn" class="btn btn-danger hidden">
-          <span class="btn-text">Stop Recording</span>
+        <button id="stopBtn" class="btn-abort hidden">
+          TERMINATE MISSION
         </button>
-      </section>
-    </main>
-    
-    <footer>
-      <div class="version">v1.0.0</div>
-      <div class="shortcuts">
-        <div class="shortcut">
-          <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>R</kbd>
-          <span>Start/Stop</span>
-        </div>
-        <div class="shortcut">
-          <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd>
-          <span>Pause/Resume</span>
-        </div>
       </div>
-    </footer>
+    </main>
   </div>
   <script type="module" src="popup.js"></script>
 </body>
 </html>
-
