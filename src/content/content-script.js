@@ -134,6 +134,8 @@ const MESSAGE_TYPES = {
   HIDE_AREA_SELECTOR: 'hide-area-selector',
   SHOW_DOCK: 'show-dock',
   HIDE_DOCK: 'hide-dock',
+  CLICKCAP_STREAM_READY: 'clickcap-stream-ready',
+  CLICKCAP_STREAM_STOPPED: 'clickcap-stream-stopped',
   UPDATE_DOCK_STATS: 'update-dock-stats',
   CONTENT_SCRIPT_READY: 'content-script-ready',
   OFFSCREEN_READY: 'offscreen-ready',
@@ -142,6 +144,11 @@ const MESSAGE_TYPES = {
   ELEMENT_CLICKED_ZOOM: 'element-clicked-zoom',
   TOGGLE_ELEMENT_ZOOM: 'toggle-element-zoom'
 };
+
+window.ClickCapPageBridge?.install({
+  sendToExtension: (message) => safeSend(message),
+  extensionVersion: chrome?.runtime?.getManifest?.().version ?? 'unknown',
+});
 
 // ==================== AREA SELECTOR (Inline) ====================
 class AreaSelector {
@@ -1739,6 +1746,46 @@ class ContentMain {
         }, 100);
 
         return { success: true };
+
+      case MESSAGE_TYPES.CLICKCAP_STREAM_READY: {
+        const streamId = msg.data?.streamId;
+        if (typeof streamId === 'string') {
+          window.postMessage({
+            source: 'clickcap-extension',
+            target: 'pons-link',
+            protocol: 'pons-clickcap',
+            version: 1,
+            type: 'PONS_CLICKCAP_EVENT',
+            event: 'attach-stream',
+            requestId: msg.data?.requestId,
+            payload: {
+              streamId,
+              cropArea: msg.data?.cropArea,
+              view: msg.data?.view,
+              roomHint: msg.data?.roomHint,
+              sourceTabId: msg.data?.sourceTabId,
+            },
+          }, window.location.origin);
+        }
+        return { success: true };
+      }
+
+      case MESSAGE_TYPES.CLICKCAP_STREAM_STOPPED: {
+        window.postMessage({
+          source: 'clickcap-extension',
+          target: 'pons-link',
+          protocol: 'pons-clickcap',
+          version: 1,
+          type: 'PONS_CLICKCAP_EVENT',
+          event: 'stop-stream',
+          requestId: msg.data?.requestId,
+          payload: {
+            roomHint: msg.data?.roomHint,
+            sourceTabId: msg.data?.sourceTabId,
+          },
+        }, window.location.origin);
+        return { success: true };
+      }
 
       case MESSAGE_TYPES.UPDATE_DOCK_STATS:
         this.dock.updateStats(msg.data || {});

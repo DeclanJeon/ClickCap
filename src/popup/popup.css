@@ -93,6 +93,43 @@ h1 { font-size: 18px; font-weight: 700; color: #fff; }
 .btn-launch:hover { transform: translateY(-2px); box-shadow: 0 0 30px rgba(0, 240, 255, 0.5); }
 .btn-launch:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 
+.btn-share {
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid rgba(0, 240, 255, 0.45);
+  border-radius: 8px;
+  background: rgba(0, 240, 255, 0.12);
+  color: #00F0FF;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-share:hover { background: rgba(0, 240, 255, 0.2); }
+.btn-share:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.status-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #EAECEF;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+}
+.status-box.error {
+  color: #FFD6E1;
+  border-color: rgba(255, 42, 109, 0.45);
+  background: rgba(255, 42, 109, 0.12);
+}
+.status-box.info {
+  color: #D7FBFF;
+  border-color: rgba(0, 240, 255, 0.35);
+  background: rgba(0, 240, 255, 0.1);
+}
+
 .btn-abort {
   width: 100%; padding: 14px; border: 1px solid #FF2A6D;
   background: rgba(255, 42, 109, 0.1); color: #FF2A6D;

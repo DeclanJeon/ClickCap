@@ -5,7 +5,9 @@ class PopupMain {
   constructor() {
     this.prefs = { ...DEFAULT_PREFERENCES };
     this.startBtn = document.getElementById('startBtn');
+    this.shareBtn = document.getElementById('shareBtn');
     this.stopBtn = document.getElementById('stopBtn');
+    this.statusBox = document.getElementById('statusBox');
 
     this.controls = {
       format: document.getElementById('format'),
@@ -25,6 +27,7 @@ class PopupMain {
     };
 
     this.startBtn.addEventListener('click', () => this.start());
+    this.shareBtn.addEventListener('click', () => this.shareToPonsLink());
     this.stopBtn.addEventListener('click', () => this.stop());
 
     // 포맷 변경 시 UI 업데이트
@@ -45,9 +48,77 @@ class PopupMain {
       const saved = await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES);
       if (saved) this.prefs = { ...this.prefs, ...saved };
       this.syncUI();
+      await this.syncSessionState();
     } catch (e) {
       console.error('[Popup] Initialization error:', e);
     }
+  }
+
+  sendRuntimeMessage(message, timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('ClickCap service worker did not respond.'));
+      }, timeoutMs);
+
+      chrome.runtime.sendMessage(message, (response) => {
+        clearTimeout(timeout);
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+        } else {
+          resolve(response);
+        }
+      });
+    });
+  }
+
+  async syncSessionState() {
+    try {
+      const response = await this.sendRuntimeMessage({ type: 'GET_RECORDING_SESSION' }, 3000);
+      this.applySessionState(response?.session);
+    } catch (error) {
+      const saved = await storageManager.getChromeStorage(STORAGE_KEYS.ACTIVE_CAPTURE_SESSION);
+      this.applySessionState(saved ? { ...saved, isActive: true } : null);
+    }
+  }
+
+  applySessionState(session) {
+    if (!session?.isActive) {
+      this.setIdleControls();
+      return;
+    }
+
+    this.setActiveControls();
+    const label = session.type === 'pons-link' ? 'PonsLink Cast' : 'Recording';
+    const status = session.status === 'selecting'
+      ? `${label}: select an area in the current tab.`
+      : session.status === 'ready'
+        ? `${label}: area selected. Press START on the page dock.`
+        : `${label}: active.`;
+    this.showStatus(status, 'info');
+  }
+
+  setActiveControls() {
+    this.startBtn.classList.add('hidden');
+    this.shareBtn.classList.add('hidden');
+    this.stopBtn.classList.remove('hidden');
+  }
+
+  setIdleControls() {
+    this.startBtn.classList.remove('hidden');
+    this.shareBtn.classList.remove('hidden');
+    this.stopBtn.classList.add('hidden');
+  }
+
+  showStatus(message, type = 'info') {
+    if (!this.statusBox) return;
+    this.statusBox.textContent = message;
+    this.statusBox.className = `status-box ${type}`;
+  }
+
+  clearStatus() {
+    if (!this.statusBox) return;
+    this.statusBox.textContent = '';
+    this.statusBox.className = 'status-box hidden';
   }
 
   syncUI() {
@@ -109,6 +180,50 @@ class PopupMain {
     }
   }
 
+  async startForPonsLink() {
+    const mode = document.querySelector('input[name="mode"]:checked')?.value || 'full-screen';
+    await this.onPrefChanged();
+
+    this.shareBtn.disabled = true;
+    this.shareBtn.textContent = 'CONNECTING...';
+    this.clearStatus();
+
+    try {
+      const res = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('PonsLink Cast connection timed out. Keep a PonsLink room tab open and try again.'));
+        }, 15000);
+
+        chrome.runtime.sendMessage({
+          type: MESSAGE_TYPES.START_RECORDING_FOR_PONS_LINK,
+          data: { mode, preferences: this.prefs }
+        }, (r) => {
+          clearTimeout(timeout);
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+          } else {
+            resolve(r);
+          }
+        });
+      });
+
+      if (!res?.success) {
+        throw new Error(res?.error || 'PonsLink Cast could not start.');
+      }
+
+      this.setActiveControls();
+      this.showStatus(mode === 'area'
+        ? 'PonsLink Cast is waiting for area selection.'
+        : 'PonsLink Cast is active.',
+      'info');
+    } catch (e) {
+      this.showStatus(e.message, 'error');
+    } finally {
+      this.shareBtn.disabled = false;
+      this.shareBtn.textContent = 'PONSLINK CAST';
+    }
+  }
+
   async start() {
     const mode = document.querySelector('input[name="mode"]:checked')?.value || 'full-screen';
     await this.onPrefChanged();
@@ -129,7 +244,7 @@ class PopupMain {
         throw new Error('이 페이지는 녹화할 수 없습니다.');
       }
     } catch (e) {
-      alert(`녹화 시작 실패:\n\n${e.message}`);
+      this.showStatus(`Recording failed: ${e.message}`, 'error');
       this.startBtn.disabled = false;
       this.startBtn.textContent = '녹화 시작';
       return;
@@ -158,14 +273,21 @@ class PopupMain {
         throw new Error(res?.error || '녹화 시작 실패');
       }
 
-      this.startBtn.classList.add('hidden');
-      this.stopBtn.classList.remove('hidden');
+      this.setActiveControls();
+      this.showStatus(mode === 'area'
+        ? 'Recording is waiting for area selection.'
+        : 'Recording is active.',
+      'info');
     } catch (e) {
-      alert(`녹화 시작 실패:\n\n${e.message}`);
+      this.showStatus(`Recording failed: ${e.message}`, 'error');
     } finally {
       this.startBtn.disabled = false;
       this.startBtn.textContent = '녹화 시작';
     }
+  }
+
+  async shareToPonsLink() {
+    await this.startForPonsLink();
   }
 
   async stop() {
@@ -181,16 +303,15 @@ class PopupMain {
       });
 
       if (!res?.success) {
-        alert('녹화 중지 실패: ' + (res?.error || '알 수 없는 오류'));
+        this.showStatus('Stop failed: ' + (res?.error || 'Unknown error'), 'error');
       } else {
         const format = this.prefs.format === 'gif' ? 'GIF' : 'WebM';
-        alert(`녹화가 완료되었습니다. ${format} 파일이 다운로드됩니다.`);
+        this.showStatus(`Recording completed. ${format} download will start.`, 'info');
       }
     } catch (e) {
-      alert('녹화 중지 실패: ' + e.message);
+      this.showStatus('Stop failed: ' + e.message, 'error');
     } finally {
-      this.startBtn.classList.remove('hidden');
-      this.stopBtn.classList.add('hidden');
+      this.setIdleControls();
     }
   }
 }

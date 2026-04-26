@@ -94,7 +94,12 @@ class MessageQueue {
           setTimeout(() => this.processQueue(tabId), 500);
           break;
         }
-        await SafeChrome.sendTabMessage(tabId, message);
+        const result = await SafeChrome.sendTabMessage(tabId, message);
+        if (!result?.success) {
+          queue.unshift(message);
+          setTimeout(() => this.processQueue(tabId), 1000);
+          break;
+        }
       } catch {
         if (queue.length > 0) {
           queue.unshift(message);
@@ -127,6 +132,13 @@ class MessageQueue {
 }
 
 const messageQueue = new MessageQueue();
+const PENDING_PONS_LINK_CAPTURE_HOST_TTL_MS = 8 * 60 * 60 * 1000;
+const isValidPonsLinkHost = (host) => {
+  return !!host
+    && Number.isInteger(host.tabId)
+    && host.tabId > 0
+    && typeof host.requestedAt === 'number';
+};
 
 async function tabExists(tabId) {
   try {
@@ -150,20 +162,26 @@ class ServiceWorkerMain {
       offscreenReady: false,
 
       // ✅ 추가: 녹화 세션 상태
-      recordingSession: null // { tabId, cropArea, startTime, isActive, preferences }
+      recordingSession: null, // { tabId, cropArea, startTime, isActive, preferences }
+      pendingPonsLinkCaptureHost: null, // { tabId, requestId, roomHint, requestedAt }
+      ponsLinkShareSession: null, // { host, sourceTabId, startedAt }
+      activeCaptureSession: null, // { mode, type, status, sourceTabId, startedAt, preferences }
     };
     this.setup();
     this.setupKeepAlive();
+    void this.init();
   }
 
   setup() {
     chrome.runtime.onInstalled.addListener(() => {
-      this.init();
+      void this.init();
     });
-    chrome.runtime.onStartup.addListener(() => this.init());
+    chrome.runtime.onStartup.addListener(() => {
+      void this.init();
+    });
 
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      this.handle(message).then(sendResponse).catch((e) => {
+      this.handle(message, sender).then(sendResponse).catch((e) => {
         sendResponse({ success: false, error: e.message });
       });
       return true;
@@ -175,6 +193,16 @@ class ServiceWorkerMain {
         this.state.currentTabId = null;
         this.state.isRecording = false;
         this.state.isPaused = false;
+        void this.clearActiveCaptureSession();
+      }
+      if (this.state.pendingPonsLinkCaptureHost?.tabId === tabId) {
+        void this.clearPendingPonsLinkCaptureHost();
+      }
+      if (this.state.ponsLinkShareSession?.host?.tabId === tabId) {
+        this.state.ponsLinkShareSession = null;
+        this.state.isRecording = false;
+        this.state.isPaused = false;
+        void this.clearActiveCaptureSession();
       }
     });
 
@@ -256,9 +284,80 @@ class ServiceWorkerMain {
     await storageManager.init();
     const saved = await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES);
     if (saved) this.state.preferences = { ...this.state.preferences, ...saved };
+
+    await this.loadPendingPonsLinkCaptureHost();
+    await this.loadActiveCaptureSession();
   }
 
-  async handle(message) {
+  async loadActiveCaptureSession() {
+    const saved = await storageManager.getChromeStorage(STORAGE_KEYS.ACTIVE_CAPTURE_SESSION);
+    if (!saved || typeof saved !== 'object') return;
+
+    const sourceTabId = saved.sourceTabId;
+    if (Number.isInteger(sourceTabId) && sourceTabId > 0 && !(await tabExists(sourceTabId))) {
+      await this.clearActiveCaptureSession();
+      return;
+    }
+
+    this.state.activeCaptureSession = saved;
+    this.state.currentTabId = Number.isInteger(sourceTabId) ? sourceTabId : this.state.currentTabId;
+    this.state.isRecording = saved.status === 'sharing' || saved.status === 'recording' || saved.status === 'selecting';
+    this.state.startedAt = saved.startedAt || this.state.startedAt;
+    if (saved.type === 'pons-link') {
+      this.state.ponsLinkShareSession = saved.ponsLinkShareSession || this.state.ponsLinkShareSession;
+    }
+  }
+
+  async persistActiveCaptureSession(session) {
+    this.state.activeCaptureSession = session;
+    await storageManager.saveChromeStorage(STORAGE_KEYS.ACTIVE_CAPTURE_SESSION, session);
+  }
+
+  async clearActiveCaptureSession() {
+    this.state.activeCaptureSession = null;
+    await storageManager.removeChromeStorage(STORAGE_KEYS.ACTIVE_CAPTURE_SESSION);
+  }
+
+  async loadPendingPonsLinkCaptureHost() {
+    const saved = await storageManager.getChromeStorage(STORAGE_KEYS.PENDING_PONS_LINK_CAPTURE_HOST);
+
+    if (!isValidPonsLinkHost(saved)) {
+      if (saved) {
+        await storageManager.removeChromeStorage(STORAGE_KEYS.PENDING_PONS_LINK_CAPTURE_HOST);
+      }
+      return;
+    }
+
+    const pendingAge = Date.now() - saved.requestedAt;
+    if (pendingAge > PENDING_PONS_LINK_CAPTURE_HOST_TTL_MS) {
+      console.log('[ServiceWorker] Dropping stale pending ClickCap capture host registration.');
+      await this.clearPendingPonsLinkCaptureHost();
+      return;
+    }
+
+    this.state.pendingPonsLinkCaptureHost = saved;
+    console.log('[ServiceWorker] Restored pending ClickCap host registration:', saved.requestId);
+  }
+
+  async persistPendingPonsLinkCaptureHost() {
+    const host = this.state.pendingPonsLinkCaptureHost;
+    if (!isValidPonsLinkHost(host)) {
+      await storageManager.removeChromeStorage(STORAGE_KEYS.PENDING_PONS_LINK_CAPTURE_HOST);
+      return;
+    }
+
+    await storageManager.saveChromeStorage(
+      STORAGE_KEYS.PENDING_PONS_LINK_CAPTURE_HOST,
+      host,
+    );
+  }
+
+  async clearPendingPonsLinkCaptureHost() {
+    this.state.pendingPonsLinkCaptureHost = null;
+    await storageManager.removeChromeStorage(STORAGE_KEYS.PENDING_PONS_LINK_CAPTURE_HOST);
+  }
+
+  async handle(message, sender) {
     switch (message.type) {
       case MESSAGE_TYPES.CONTENT_SCRIPT_READY:
         return { success: true };
@@ -267,6 +366,8 @@ class ServiceWorkerMain {
         return { success: true };
       case MESSAGE_TYPES.START_RECORDING:
         return this.startCmd(message.data);
+      case MESSAGE_TYPES.START_RECORDING_FOR_PONS_LINK:
+        return this.startCmd(message.data, { requirePonsLinkTarget: true, shareToPonsLink: true });
       case MESSAGE_TYPES.AREA_SELECTED:
         return this.areaSelected(message.data);
       case 'start-area-recording': // 새로 추가
@@ -306,14 +407,39 @@ class ServiceWorkerMain {
 
         console.log('📤 [ServiceWorker] Zoom forwarded to offscreen:', zoomResult);
         return zoomResult;
+      case MESSAGE_TYPES.CLICKCAP_REGISTER_PONS_LINK:
+        return this.registerPonsLinkCaptureHost({
+          sender,
+          requestId: message.requestId,
+          roomHint: message.data?.roomHint,
+        });
       case 'GET_RECORDING_SESSION': // ✅ 추가
         return {
           success: true,
-          session: this.state.recordingSession
+          session: this.getPublicCaptureSession()
         };
       default:
         return { success: true };
     }
+  }
+
+  getPublicCaptureSession() {
+    const active = this.state.activeCaptureSession;
+    if (!active) {
+      return {
+        isActive: false,
+        isRecording: this.state.isRecording,
+        isPaused: this.state.isPaused,
+      };
+    }
+
+    return {
+      ...active,
+      isActive: true,
+      isRecording: this.state.isRecording,
+      isPaused: this.state.isPaused,
+      recordingSession: this.state.recordingSession,
+    };
   }
 
   async ensureContentScript(tabId) {
@@ -354,6 +480,53 @@ class ServiceWorkerMain {
     return false;
   }
 
+  async registerPonsLinkCaptureHost({
+    sender,
+    requestId,
+    roomHint,
+  }) {
+    const tabId = sender?.tab?.id;
+    if (!tabId) {
+      return { success: false, error: 'No source tab for Pons link registration' };
+    }
+
+    this.state.pendingPonsLinkCaptureHost = {
+      tabId,
+      requestId,
+      roomHint,
+      requestedAt: Date.now(),
+    };
+    await this.persistPendingPonsLinkCaptureHost();
+
+    return { success: true, requestId };
+  }
+
+  async notifyPonsLinkCaptureHost(streamId, payload = {}) {
+    const hostRequest = this.state.pendingPonsLinkCaptureHost;
+    if (!hostRequest?.tabId) return;
+
+    const pendingAge = Date.now() - (hostRequest.requestedAt || 0);
+
+    if (pendingAge > PENDING_PONS_LINK_CAPTURE_HOST_TTL_MS) {
+      await this.clearPendingPonsLinkCaptureHost();
+      return;
+    }
+
+    const notifyMessage = {
+      type: MESSAGE_TYPES.CLICKCAP_STREAM_READY,
+      data: {
+        requestId: hostRequest.requestId,
+        streamId,
+        roomHint: hostRequest.roomHint,
+        sourceTabId: this.state.currentTabId,
+        cropArea: payload.cropArea,
+        view: payload.view,
+      },
+    };
+    await messageQueue.enqueue(hostRequest.tabId, notifyMessage);
+    await this.clearPendingPonsLinkCaptureHost();
+  }
+
   async ensureOffscreen() {
     const ctx = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
     if (ctx.length === 0) {
@@ -366,7 +539,14 @@ class ServiceWorkerMain {
     }
   }
 
-  async startCmd({ mode, preferences }) {
+  async startCmd({ mode, preferences }, options = {}) {
+    if (options.requirePonsLinkTarget && !isValidPonsLinkHost(this.state.pendingPonsLinkCaptureHost)) {
+      return {
+        success: false,
+        error: 'No open Pons-Link room is connected. Open your Pons-Link room tab, then try Share Screen again.',
+      };
+    }
+
     if (this.state.isStarting) {
       return { success: false, error: 'Already starting' };
     }
@@ -378,18 +558,20 @@ class ServiceWorkerMain {
 
     try {
       const result = await Promise.race([
-        this.startCmdInternal({ mode, preferences }),
+        this.startCmdInternal({ mode, preferences }, options),
         timeoutPromise
       ]);
       return result;
     } catch (error) {
+      await this.clearPendingPonsLinkCaptureHost();
+      this.state.ponsLinkShareSession = null;
       return { success: false, error: error.message };
     } finally {
       this.state.isStarting = false;
     }
   }
 
-  async startCmdInternal({ mode, preferences }) {
+  async startCmdInternal({ mode, preferences }, options = {}) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error('No active tab');
 
@@ -401,6 +583,22 @@ class ServiceWorkerMain {
     this.state.currentTabId = tab.id;
     this.state.preferences = { ...this.state.preferences, ...(preferences || {}) };
     await storageManager.saveChromeStorage(STORAGE_KEYS.USER_PREFERENCES, this.state.preferences);
+    this.state.ponsLinkShareSession = options.shareToPonsLink
+      ? {
+          host: { ...this.state.pendingPonsLinkCaptureHost },
+          sourceTabId: tab.id,
+          startedAt: Date.now(),
+        }
+      : null;
+    await this.persistActiveCaptureSession({
+      type: options.shareToPonsLink ? 'pons-link' : 'recording',
+      mode,
+      status: mode === 'area' ? 'selecting' : (options.shareToPonsLink ? 'sharing' : 'recording'),
+      sourceTabId: tab.id,
+      startedAt: Date.now(),
+      preferences: { ...this.state.preferences },
+      ponsLinkShareSession: this.state.ponsLinkShareSession,
+    });
 
     const contentScriptReady = await this.ensureContentScript(tab.id);
     if (!contentScriptReady) {
@@ -453,6 +651,10 @@ class ServiceWorkerMain {
 
     console.log(' [ServiceWorker] Full screen recording view:', view);
 
+    if (options.shareToPonsLink) {
+      return this.startPonsLinkShareCapture({ cropArea: null, view });
+    }
+
     // cropArea: null로 전체 화면 녹화 시작
     await this.startCapture({ cropArea: null, view }, this.state.preferences);
 
@@ -467,6 +669,15 @@ class ServiceWorkerMain {
 
   async areaSelected({ cropArea, view }) {
     this.state.cropArea = cropArea;
+    this.state.cropView = view;
+    if (this.state.activeCaptureSession) {
+      await this.persistActiveCaptureSession({
+        ...this.state.activeCaptureSession,
+        status: 'ready',
+        cropArea,
+        view,
+      });
+    }
 
     // 영역 선택 UI 숨기기
     await SafeChrome.sendTabMessage(this.state.currentTabId, {
@@ -559,7 +770,11 @@ class ServiceWorkerMain {
       vvHeight: 1080
     };
 
-    await this.startCapture({ cropArea: this.state.cropArea, view }, this.state.preferences);
+    if (this.state.ponsLinkShareSession) {
+      await this.startPonsLinkShareCapture({ cropArea: this.state.cropArea, view });
+    } else {
+      await this.startCapture({ cropArea: this.state.cropArea, view }, this.state.preferences);
+    }
 
   // ✅ Content script에 녹화 시작 알림
   await SafeChrome.sendTabMessage(this.state.currentTabId, {
@@ -569,6 +784,43 @@ class ServiceWorkerMain {
   console.log('✅ [ServiceWorker] Area recording started');
 
   return { success: true };
+  }
+
+  async startPonsLinkShareCapture({ cropArea, view }) {
+    const host = this.state.ponsLinkShareSession?.host || this.state.pendingPonsLinkCaptureHost;
+    if (!isValidPonsLinkHost(host)) {
+      throw new Error('No open Pons-Link room is connected.');
+    }
+
+    const streamId = await chrome.tabCapture.getMediaStreamId({
+      targetTabId: this.state.currentTabId,
+      consumerTabId: host.tabId,
+    });
+
+    this.state.isRecording = true;
+    this.state.isPaused = false;
+    this.state.startedAt = Date.now();
+    await this.persistActiveCaptureSession({
+      ...(this.state.activeCaptureSession || {}),
+      type: 'pons-link',
+      status: 'sharing',
+      mode: this.state.activeCaptureSession?.mode || 'area',
+      sourceTabId: this.state.currentTabId,
+      startedAt: this.state.activeCaptureSession?.startedAt || Date.now(),
+      cropArea,
+      view,
+      ponsLinkShareSession: this.state.ponsLinkShareSession,
+    });
+
+    await this.notifyPonsLinkCaptureHost(streamId, { cropArea, view });
+
+    console.log('✅ [ServiceWorker] Pons-Link share stream handed off:', {
+      sourceTabId: this.state.currentTabId,
+      consumerTabId: host.tabId,
+      hasCrop: !!cropArea,
+    });
+
+    return { success: true, streamId };
   }
 
   async showDockWithRetry(waitingMode = false) {
@@ -643,8 +895,23 @@ class ServiceWorkerMain {
       isActive: true,
       preferences: { ...preferences }
     };
+    await this.persistActiveCaptureSession({
+      ...(this.state.activeCaptureSession || {}),
+      type: 'recording',
+      status: 'recording',
+      mode: payload.cropArea ? 'area' : 'full-screen',
+      sourceTabId: this.state.currentTabId,
+      startedAt: this.state.startedAt,
+      cropArea: payload.cropArea,
+      view: payload.view,
+      preferences: { ...preferences },
+    });
+
+    await this.notifyPonsLinkCaptureHost(streamId);
 
     console.log('✅ [ServiceWorker] Recording session saved:', this.state.recordingSession);
+
+    return { streamId };
   }
 
   async forwardStats(data) {
@@ -678,6 +945,20 @@ class ServiceWorkerMain {
 
   async stopCmd() {
     console.log('🛑 [ServiceWorker] stopCmd called');
+    const shareHost = this.state.ponsLinkShareSession?.host;
+    if (isValidPonsLinkHost(shareHost)) {
+      await messageQueue.enqueue(shareHost.tabId, {
+        type: MESSAGE_TYPES.CLICKCAP_STREAM_STOPPED,
+        data: {
+          requestId: shareHost.requestId,
+          roomHint: shareHost.roomHint,
+          sourceTabId: this.state.currentTabId,
+        },
+      });
+    }
+    await this.clearPendingPonsLinkCaptureHost();
+    this.state.ponsLinkShareSession = null;
+    await this.clearActiveCaptureSession();
     
     // Offscreen에 중지 신호 전송
     await SafeChrome.sendMessage({
@@ -733,6 +1014,12 @@ class ServiceWorkerMain {
           });
           this.state.isPaused = true;
         }
+        if (this.state.activeCaptureSession) {
+          await this.persistActiveCaptureSession({
+            ...this.state.activeCaptureSession,
+            isPaused: this.state.isPaused,
+          });
+        }
         return { success: true };
         
       case 'stop':
@@ -743,6 +1030,9 @@ class ServiceWorkerMain {
           type: MESSAGE_TYPES.CANCEL_RECORDING,
           target: 'offscreen'
         });
+        await this.clearPendingPonsLinkCaptureHost();
+        this.state.ponsLinkShareSession = null;
+        await this.clearActiveCaptureSession();
         
         this.state.isRecording = false;
         this.state.isPaused = false;

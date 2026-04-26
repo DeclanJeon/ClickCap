@@ -1,5 +1,6 @@
 export const MESSAGE_TYPES = {
   START_RECORDING: 'start-recording',
+  START_RECORDING_FOR_PONS_LINK: 'start-recording-for-pons-link',
   STOP_RECORDING: 'stop-recording',
   PAUSE_RECORDING: 'pause-recording',
   RESUME_RECORDING: 'resume-recording',
@@ -11,6 +12,9 @@ export const MESSAGE_TYPES = {
   HIDE_AREA_SELECTOR: 'hide-area-selector',
   SHOW_DOCK: 'show-dock',
   HIDE_DOCK: 'hide-dock',
+  CLICKCAP_REGISTER_PONS_LINK: 'register-pons-link',
+  CLICKCAP_STREAM_READY: 'clickcap-stream-ready',
+  CLICKCAP_STREAM_STOPPED: 'clickcap-stream-stopped',
   UPDATE_DOCK_STATS: 'update-dock-stats',
   CONTENT_SCRIPT_READY: 'content-script-ready',
   OFFSCREEN_READY: 'offscreen-ready',
@@ -21,7 +25,9 @@ export const MESSAGE_TYPES = {
 };
 
 export const STORAGE_KEYS = {
-  USER_PREFERENCES: 'userPreferences'
+  USER_PREFERENCES: 'userPreferences',
+  PENDING_PONS_LINK_CAPTURE_HOST: 'pendingPonsLinkCaptureHost',
+  ACTIVE_CAPTURE_SESSION: 'activeCaptureSession'
 };
 
 export const DEFAULT_PREFERENCES = {
