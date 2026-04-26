@@ -450,6 +450,10 @@ class ServiceWorkerMain {
       try {
         chrome.tabs.sendMessage(tabId, { type: 'ping' }, (r) => {
           clearTimeout(timeout);
+          if (chrome.runtime.lastError) {
+            res(false);
+            return;
+          }
           res(!!(r && r.success));
         });
       } catch {

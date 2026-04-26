@@ -67,7 +67,11 @@ export class MessageHandler {
   broadcast(message) {
     chrome.tabs.query({}, (tabs) => {
       tabs.forEach((tab) => {
-        chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+        chrome.tabs.sendMessage(tab.id, message, () => {
+          if (chrome.runtime.lastError) {
+            return;
+          }
+        });
       });
     });
   }

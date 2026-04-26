@@ -174,7 +174,7 @@ class PopupMain {
     await storageManager.saveChromeStorage(STORAGE_KEYS.USER_PREFERENCES, this.prefs);
 
     try {
-      chrome.runtime.sendMessage({ type: MESSAGE_TYPES.UPDATE_PREFS, data: this.prefs });
+      await this.sendRuntimeMessage({ type: MESSAGE_TYPES.UPDATE_PREFS, data: this.prefs }, 1200);
     } catch (e) {
       console.warn('[Popup] Failed to send prefs update:', e);
     }
