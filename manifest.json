@@ -1,7 +1,7 @@
 {
   "name": "ClickCap - Smart Screen Recorder",
   "short_name": "ClickCap",
-  "description": "Smart screen recording with automatic click zoom and GIF export. Perfect for tutorials and demos.",
+  "description": "Smart screen recording with automatic click zoom and WebM export. Perfect for tutorials and demos.",
   "version": "1.0.1",
   "manifest_version": 3,
   "minimum_chrome_version": "116",
@@ -65,9 +65,7 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "src/offscreen/offscreen.html",
-        "src/vendor/gif.js",
-        "src/vendor/gif.worker.js"
+        "src/offscreen/offscreen.html"
       ],
       "matches": ["<all_urls>"]
     }

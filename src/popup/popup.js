@@ -10,28 +10,16 @@ class PopupMain {
     this.statusBox = document.getElementById('statusBox');
 
     this.controls = {
-      format: document.getElementById('format'),
       quality: document.getElementById('quality'),
       fps: document.getElementById('fps'),
-      gifQuality: document.getElementById('gifQuality'),
-      gifMaxWidth: document.getElementById('gifMaxWidth'),
+      outputResolution: document.getElementById('outputResolution'),
       includeAudio: document.getElementById('includeAudio'),
       showDock: document.getElementById('showDock')
-    };
-
-    this.groups = {
-      quality: document.getElementById('qualityGroup'),
-      audio: document.getElementById('audioGroup'),
-      gifQuality: document.getElementById('gifQualityGroup'),
-      gifSize: document.getElementById('gifSizeGroup')
     };
 
     this.startBtn.addEventListener('click', () => this.start());
     this.shareBtn.addEventListener('click', () => this.shareToPonsLink());
     this.stopBtn.addEventListener('click', () => this.stop());
-
-    // 포맷 변경 시 UI 업데이트
-    this.controls.format.addEventListener('change', () => this.updateUIForFormat());
 
     Object.values(this.controls).forEach((el) => {
       if (el) {
@@ -123,50 +111,20 @@ class PopupMain {
 
   syncUI() {
     const p = this.prefs;
-    this.controls.format.value = p.format || 'webm';
     this.controls.quality.value = p.quality || 'HIGH';
     this.controls.fps.value = String(p.fps || 30);
-    this.controls.gifQuality.value = String(p.gifQuality || 10);
-    this.controls.gifMaxWidth.value = String(p.gifMaxWidth || 480);
+    this.controls.outputResolution.value = p.outputResolution || 'source';
     this.controls.includeAudio.checked = p.includeAudio !== false;
     this.controls.showDock.checked = p.showDock !== false;
-    this.updateUIForFormat();
-  }
-
-  updateUIForFormat() {
-    const format = this.controls.format.value;
-    const isGif = format === 'gif';
-
-    if (isGif) {
-      // GIF 모드
-      this.groups.quality.style.display = 'none';
-      this.groups.audio.style.display = 'none';
-      this.groups.gifQuality.style.display = 'block';
-      this.groups.gifSize.style.display = 'block';
-      
-      // GIF는 낮은 FPS 권장
-      if (parseInt(this.controls.fps.value) > 15) {
-        this.controls.fps.value = '10';
-      }
-    } else {
-      // WebM 모드
-      this.groups.quality.style.display = 'block';
-      this.groups.audio.style.display = 'block';
-      this.groups.gifQuality.style.display = 'none';
-      this.groups.gifSize.style.display = 'none';
-    }
-
-    this.onPrefChanged();
   }
 
   async onPrefChanged() {
     this.prefs = {
       ...this.prefs,
-      format: this.controls.format.value,
+      format: 'webm',
       quality: this.controls.quality.value,
       fps: parseInt(this.controls.fps.value, 10),
-      gifQuality: parseInt(this.controls.gifQuality.value, 10),
-      gifMaxWidth: parseInt(this.controls.gifMaxWidth.value, 10),
+      outputResolution: this.controls.outputResolution.value,
       includeAudio: this.controls.includeAudio.checked,
       showDock: this.controls.showDock.checked
     };
@@ -305,8 +263,7 @@ class PopupMain {
       if (!res?.success) {
         this.showStatus('Stop failed: ' + (res?.error || 'Unknown error'), 'error');
       } else {
-        const format = this.prefs.format === 'gif' ? 'GIF' : 'WebM';
-        this.showStatus(`Recording completed. ${format} download will start.`, 'info');
+        this.showStatus('Recording completed. WebM download will start.', 'info');
       }
     } catch (e) {
       this.showStatus('Stop failed: ' + e.message, 'error');

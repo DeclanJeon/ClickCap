@@ -64,6 +64,7 @@ h1 { font-size: 18px; font-weight: 700; color: #fff; }
 }
 .setting-row { margin-bottom: 12px; }
 .setting-row label { font-size: 12px; color: #8B9BB4; display: block; margin-bottom: 6px; }
+.format-note span { color: #EAECEF; font-size: 13px; line-height: 1.4; display: block; }
 .cyber-select {
   width: 100%; background: #0B0E14; color: #EAECEF;
   border: 1px solid #2D3748; padding: 8px 12px; border-radius: 6px;

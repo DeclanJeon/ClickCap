@@ -4,7 +4,7 @@
 
 ![ClickCap Logo](icons/icon-128.png)
 
-**Smart screen recording with automatic click zoom and GIF export**
+**Smart screen recording with automatic click zoom and WebM export**
 
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/yourusername/clickcap)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -14,18 +14,21 @@
 
 ---
 
-## ¿ Features
+## ï¿½ Features
 
-- ¿ **Automatic Click Zoom** - Elements zoom when clicked during recording
-- ¿ **Dual Export** - Save as WebM video or animated GIF
-- ¿ **Area Selection** - Record full screen or specific regions
-- ¿¿ **Live Controls** - Adjust zoom scale and duration in real-time
-- ¿ **Smart Dock** - Floating control panel with recording stats
-- ¿¿ **Keyboard Shortcuts** - Quick access to recording functions
+- ï¿½ **Automatic Click Zoom** - Elements zoom when clicked during recording
+- **WebM Export** - Download recordings as playable WebM video
+- **Output Resolution** - Preserve source or cap output at 1080p, 720p, or 480p
+- ï¿½ **Area Selection** - Record full screen or specific regions
+- ï¿½ï¿½ **Live Controls** - Adjust zoom scale and duration in real-time
+- ï¿½ **Smart Dock** - Floating control panel with recording stats
+- ï¿½ï¿½ **Keyboard Shortcuts** - Quick access to recording functions
 
 ---
 
-## ¿ Quick Start
+See [product and technical design](docs/PRODUCT_DESIGN.md) and the [implementation plan](docs/IMPLEMENTATION_PLAN.md) for supported formats, limitations, and planned improvements. ClickCap downloads WebM recordings; convert the downloaded file to another format with a separate tool if needed.
+
+## ï¿½ Quick Start
 
 ### Installation
 

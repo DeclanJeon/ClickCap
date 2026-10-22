@@ -47,12 +47,9 @@
 
       <!-- Settings Panel -->
       <section class="control-panel">
-        <div class="setting-row">
-          <label for="format">Output Format</label>
-          <select id="format" class="cyber-select">
-            <option value="webm" selected>WebM (Video)</option>
-            <option value="gif">GIF (Animation)</option>
-          </select>
+        <div class="setting-row format-note">
+          <label>Download Format</label>
+          <span>WebM video. Convert it to other formats with your preferred tool.</span>
         </div>
         
         <!-- Dynamic Groups (IDs must match popup.js) -->
@@ -66,6 +63,16 @@
           </select>
         </div>
 
+        <div class="setting-row" id="resolutionGroup">
+          <label for="outputResolution">Output Resolution</label>
+          <select id="outputResolution" class="cyber-select">
+            <option value="source" selected>Original (source)</option>
+            <option value="1080">1080p maximum</option>
+            <option value="720">720p maximum</option>
+            <option value="480">480p maximum</option>
+          </select>
+        </div>
+
         <div class="setting-row" id="fpsGroup">
           <label for="fps">Frame Rate</label>
           <select id="fps" class="cyber-select">
@@ -73,22 +80,6 @@
             <option value="15">15 FPS</option>
             <option value="30" selected>30 FPS</option>
             <option value="60">60 FPS</option>
-          </select>
-        </div>
-
-        <div class="setting-row hidden" id="gifQualityGroup">
-          <label for="gifQuality">GIF Quality</label>
-          <select id="gifQuality" class="cyber-select">
-            <option value="10" selected>High</option>
-            <option value="20">Medium</option>
-          </select>
-        </div>
-
-        <div class="setting-row hidden" id="gifSizeGroup">
-          <label for="gifMaxWidth">GIF Max Width</label>
-          <select id="gifMaxWidth" class="cyber-select">
-            <option value="480" selected>480px</option>
-            <option value="800">800px</option>
           </select>
         </div>
 

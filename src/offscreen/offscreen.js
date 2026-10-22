@@ -1,5 +1,6 @@
 import { MESSAGE_TYPES, DEFAULT_PREFERENCES } from '../utils/constants.js';
 import { generateFilename } from '../utils/video-utils.js';
+import { calculateOutputDimensions, normalizeOutputResolution } from '../utils/resolution-utils.mjs';
 
 const REC_MIME = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') 
   ? 'video/webm;codecs=vp9,opus' 
@@ -108,6 +109,7 @@ class OffscreenRecorder {
     this.state = {
       format: DEFAULT_PREFERENCES.format || 'webm',
       fps: DEFAULT_PREFERENCES.fps || 30,
+      outputResolution: DEFAULT_PREFERENCES.outputResolution || 'source',
       quality: DEFAULT_PREFERENCES.quality || 'HIGH',
       gifQuality: DEFAULT_PREFERENCES.gifQuality || 10,
       gifMaxWidth: DEFAULT_PREFERENCES.gifMaxWidth || 480,
@@ -207,12 +209,12 @@ class OffscreenRecorder {
     
     const oldState = { ...this.state };
     
-    if (typeof prefs.format !== 'undefined') {
-      this.state.format = prefs.format;
-    }
-    
     if (typeof prefs.fps !== 'undefined') {
       this.state.fps = clamp(parseInt(prefs.fps, 10), 10, 60);
+    }
+
+    if (typeof prefs.outputResolution !== 'undefined') {
+      this.state.outputResolution = normalizeOutputResolution(prefs.outputResolution);
     }
     
     if (typeof prefs.quality !== 'undefined') {
@@ -289,7 +291,8 @@ class OffscreenRecorder {
       // 설정 먼저 업데이트
       this.updatePrefs(preferences || {});
       
-      this.isGifMode = this.state.format === 'gif';
+      this.isGifMode = false;
+      this.state.format = 'webm';
       this.isEncodingGif = false;
       this.gifEncodingProgress = 0;
 
@@ -369,22 +372,13 @@ class OffscreenRecorder {
         throw new Error('Canvas element not found');
       }
       
-      // GIF 모드일 경우 크기 조정
-      if (this.isGifMode) {
-        const aspectRatio = crop.height / crop.width;
-        const gifWidth = Math.min(crop.width, this.state.gifMaxWidth);
-        const gifHeight = Math.round(gifWidth * aspectRatio);
-        
-        this.canvas.width = gifWidth;
-        this.canvas.height = gifHeight;
-        
-        console.log('🎨 [Offscreen] GIF Canvas size:', gifWidth + 'x' + gifHeight);
-      } else {
-        this.canvas.width = crop.width;
-        this.canvas.height = crop.height;
-        
-        console.log('🎨 [Offscreen] Canvas ready:', crop.width + 'x' + crop.height);
-      }
+      const outputDimensions = calculateOutputDimensions(crop, {
+        maxHeight: this.state.outputResolution
+      });
+      this.canvas.width = outputDimensions.width;
+      this.canvas.height = outputDimensions.height;
+
+      console.log('🎨 [Offscreen] Output canvas size:', this.canvas.width + 'x' + this.canvas.height);
       
       // willReadFrequently 속성 추가 (GIF 모드에서 성능 개선)
       this.ctx = this.canvas.getContext('2d', { 
@@ -833,10 +827,11 @@ class OffscreenRecorder {
     this.totalSize = blob.size;
 
     // 파일 다운로드
+    const filename = generateFilename('gif');
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = generateFilename('gif');
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -849,7 +844,7 @@ class OffscreenRecorder {
         data: { 
           format: 'GIF', 
           size: this.totalSize, 
-          filename: generateFilename('gif') 
+          filename
         }
       });
     } catch (e) {
@@ -889,10 +884,11 @@ class OffscreenRecorder {
     });
 
     // 파일 다운로드
+    const filename = generateFilename('webm');
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = generateFilename('webm');
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -905,7 +901,7 @@ class OffscreenRecorder {
         data: { 
           format: 'WebM', 
           size: this.totalSize, 
-          filename: generateFilename('webm') 
+          filename
         }
       });
     } catch (e) {
