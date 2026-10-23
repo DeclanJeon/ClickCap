@@ -1,6 +1,7 @@
 import { MESSAGE_TYPES, DEFAULT_PREFERENCES } from '../utils/constants.js';
 import { generateFilename } from '../utils/video-utils.js';
 import { calculateOutputDimensions, normalizeOutputResolution } from '../utils/resolution-utils.mjs';
+import { downloadBlob } from '../utils/download-manager.mjs';
 
 const REC_MIME = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') 
   ? 'video/webm;codecs=vp9,opus' 
@@ -828,14 +829,15 @@ class OffscreenRecorder {
 
     // 파일 다운로드
     const filename = generateFilename('gif');
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    try {
+      await downloadBlob(blob, filename);
+    } catch (error) {
+      console.error('[Offscreen] GIF download failed:', error);
+      await this.notifyDownloadFailure(error);
+      await this.cleanup();
+      this.isStopping = false;
+      return;
+    }
 
     // 완료 메시지 전송
     try {
@@ -857,6 +859,17 @@ class OffscreenRecorder {
     console.log('✅ [Offscreen] GIF recording finalized successfully');
   }
 
+  async notifyDownloadFailure(error) {
+    try {
+      await chrome.runtime.sendMessage({
+        type: 'recording-download-failed',
+        data: { error: error.message || 'Unknown download error' }
+      });
+    } catch (messageError) {
+      console.error('[Offscreen] Could not report download failure:', messageError);
+    }
+  }
+
   async finalize() {
     if (this.isGifMode) {
       // GIF는 handleGifFinished에서 처리
@@ -864,14 +877,11 @@ class OffscreenRecorder {
     }
     
     if (!this.chunks.length || this.totalSize < 10) {
-      console.warn('⚠️ [Offscreen] No data to save');
+      const error = new Error('No video data was captured. Try recording again.');
+      console.warn('[Offscreen] No data to save');
+      await this.notifyDownloadFailure(error);
       await this.cleanup();
       this.isStopping = false;
-      
-      try {
-        chrome.runtime.sendMessage({ type: 'cleanup-recording-ui' });
-      } catch {}
-      
       return;
     }
 
@@ -885,14 +895,15 @@ class OffscreenRecorder {
 
     // 파일 다운로드
     const filename = generateFilename('webm');
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    try {
+      await downloadBlob(blob, filename);
+    } catch (error) {
+      console.error('[Offscreen] WebM download failed:', error);
+      await this.notifyDownloadFailure(error);
+      await this.cleanup();
+      this.isStopping = false;
+      return;
+    }
 
     // 완료 메시지 전송
     try {

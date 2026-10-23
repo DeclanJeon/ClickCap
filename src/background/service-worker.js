@@ -163,6 +163,7 @@ class ServiceWorkerMain {
 
       // ✅ 추가: 녹화 세션 상태
       recordingSession: null, // { tabId, cropArea, startTime, isActive, preferences }
+      controlSurface: 'dock',
       pendingPonsLinkCaptureHost: null, // { tabId, requestId, roomHint, requestedAt }
       ponsLinkShareSession: null, // { host, sourceTabId, startedAt }
       activeCaptureSession: null, // { mode, type, status, sourceTabId, startedAt, preferences }
@@ -300,8 +301,9 @@ class ServiceWorkerMain {
     }
 
     this.state.activeCaptureSession = saved;
+    this.state.controlSurface = saved.controlSurface || 'dock';
     this.state.currentTabId = Number.isInteger(sourceTabId) ? sourceTabId : this.state.currentTabId;
-    this.state.isRecording = saved.status === 'sharing' || saved.status === 'recording' || saved.status === 'selecting';
+    this.state.isRecording = saved.status === 'sharing' || saved.status === 'recording';
     this.state.startedAt = saved.startedAt || this.state.startedAt;
     if (saved.type === 'pons-link') {
       this.state.ponsLinkShareSession = saved.ponsLinkShareSession || this.state.ponsLinkShareSession;
@@ -311,6 +313,14 @@ class ServiceWorkerMain {
   async persistActiveCaptureSession(session) {
     this.state.activeCaptureSession = session;
     await storageManager.saveChromeStorage(STORAGE_KEYS.ACTIVE_CAPTURE_SESSION, session);
+  }
+
+  async finishRecordingSession() {
+    await this.clearActiveCaptureSession();
+    this.state.isRecording = false;
+    this.state.isPaused = false;
+    this.state.recordingSession = null;
+    this.state.ponsLinkShareSession = null;
   }
 
   async clearActiveCaptureSession() {
@@ -364,10 +374,36 @@ class ServiceWorkerMain {
       case MESSAGE_TYPES.OFFSCREEN_READY:
         this.state.offscreenReady = true;
         return { success: true };
+      case 'recording-download-failed':
+        await this.finishRecordingSession();
+        await chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon-48.png',
+          title: 'ClickCap could not save the recording',
+          message: message.data?.error || 'Check the browser download settings and try again.'
+        });
+        return { success: true };
+      case 'recording-finished':
+        await this.finishRecordingSession();
+        if (this.state.currentTabId) {
+          await SafeChrome.sendTabMessage(this.state.currentTabId, {
+            type: 'recording-finished',
+            data: message.data
+          });
+        }
+        return { success: true };
       case MESSAGE_TYPES.START_RECORDING:
-        return this.startCmd(message.data);
+        return this.startCmd(message.data, {
+          controlSurface: sender?.url?.includes('/src/sidepanel/') || sender?.url?.includes('/src/popup/')
+            ? 'side-panel'
+            : 'dock'
+        });
       case MESSAGE_TYPES.START_RECORDING_FOR_PONS_LINK:
-        return this.startCmd(message.data, { requirePonsLinkTarget: true, shareToPonsLink: true });
+        return this.startCmd(message.data, {
+          requirePonsLinkTarget: true,
+          shareToPonsLink: true,
+          controlSurface: 'dock'
+        });
       case MESSAGE_TYPES.AREA_SELECTED:
         return this.areaSelected(message.data);
       case 'start-area-recording': // 새로 추가
@@ -585,6 +621,7 @@ class ServiceWorkerMain {
     }
 
     this.state.currentTabId = tab.id;
+    this.state.controlSurface = options.controlSurface || 'dock';
     this.state.preferences = { ...this.state.preferences, ...(preferences || {}) };
     await storageManager.saveChromeStorage(STORAGE_KEYS.USER_PREFERENCES, this.state.preferences);
     this.state.ponsLinkShareSession = options.shareToPonsLink
@@ -601,12 +638,17 @@ class ServiceWorkerMain {
       sourceTabId: tab.id,
       startedAt: Date.now(),
       preferences: { ...this.state.preferences },
+      controlSurface: this.state.controlSurface,
       ponsLinkShareSession: this.state.ponsLinkShareSession,
     });
 
     const contentScriptReady = await this.ensureContentScript(tab.id);
     if (!contentScriptReady) {
       throw new Error('Content script not ready after retries');
+    }
+
+    if (this.state.controlSurface === 'side-panel' || !this.state.preferences.showDock) {
+      await SafeChrome.sendTabMessage(tab.id, { type: MESSAGE_TYPES.HIDE_DOCK });
     }
 
     if (mode === 'area') {
@@ -661,10 +703,11 @@ class ServiceWorkerMain {
 
     // cropArea: null로 전체 화면 녹화 시작
     await this.startCapture({ cropArea: null, view }, this.state.preferences);
+    await SafeChrome.sendTabMessage(tab.id, { type: 'recording-started' });
 
-    // 전체 화면 녹화에서는 녹화 영역 표시 안 함
-    // Dock만 표시
-    if (this.state.preferences.showDock) {
+    // 전체 화면 녹화에서는 녹화 영역 표시 안 함. Side panel이 열려 있으면
+    // 페이지 내 도크 대신 브라우저 사이드 패널을 녹화 컨트롤로 사용한다.
+    if (this.state.preferences.showDock && this.state.controlSurface !== 'side-panel') {
       await this.showDockWithRetry();
     }
 
@@ -725,9 +768,9 @@ class ServiceWorkerMain {
 
     console.log('✅ [ServiceWorker] Crop area set result:', cropResult);
 
-    // Dock 표시 (대기 모드)
-    if (prefs.showDock) {
-      await this.showDockWithRetry(true); // waitingMode = true
+    // Show on-page controls only when the popup did not open the side panel.
+    if (prefs.showDock && this.state.controlSurface !== 'side-panel') {
+      await this.showDockWithRetry(true);
     }
 
     console.log('✅ [ServiceWorker] Area selected, waiting for user to start recording');
@@ -909,6 +952,7 @@ class ServiceWorkerMain {
       cropArea: payload.cropArea,
       view: payload.view,
       preferences: { ...preferences },
+      controlSurface: this.state.controlSurface,
     });
 
     await this.notifyPonsLinkCaptureHost(streamId);
@@ -949,6 +993,9 @@ class ServiceWorkerMain {
 
   async stopCmd() {
     console.log('🛑 [ServiceWorker] stopCmd called');
+    if (this.state.activeCaptureSession?.status === 'finalizing') {
+      return { success: true, status: 'finalizing' };
+    }
     const shareHost = this.state.ponsLinkShareSession?.host;
     if (isValidPonsLinkHost(shareHost)) {
       await messageQueue.enqueue(shareHost.tabId, {
@@ -962,7 +1009,16 @@ class ServiceWorkerMain {
     }
     await this.clearPendingPonsLinkCaptureHost();
     this.state.ponsLinkShareSession = null;
-    await this.clearActiveCaptureSession();
+    const isFinalizing = this.state.isRecording && !!this.state.activeCaptureSession;
+    if (isFinalizing) {
+      await this.persistActiveCaptureSession({
+        ...this.state.activeCaptureSession,
+        status: 'finalizing',
+        isPaused: false
+      });
+    } else {
+      await this.clearActiveCaptureSession();
+    }
     
     // Offscreen에 중지 신호 전송
     await SafeChrome.sendMessage({
@@ -975,9 +1031,8 @@ class ServiceWorkerMain {
     this.state.isPaused = false;
 
     // ✅ 녹화 세션 종료
-    if (this.state.recordingSession) {
-      this.state.recordingSession.isActive = false;
-      this.state.recordingSession = null; // ✅ 완전히 제거
+    if (!isFinalizing) {
+      this.state.recordingSession = null;
       console.log('✅ [ServiceWorker] Recording session cleared');
     }
     

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ClickCap Recording Controls</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <main class="panel">
+    <header class="panel-header">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div>
+        <p class="eyebrow">CLICKCAP</p>
+        <h1>Recording controls</h1>
+      </div>
+    </header>
+
+    <section class="session" aria-live="polite">
+      <div class="session-heading">
+        <span id="statusLight" class="status-light" aria-hidden="true"></span>
+        <h2 id="statusTitle">No active recording</h2>
+      </div>
+      <p id="statusMessage">Start a recording from the ClickCap extension menu.</p>
+      <p id="recordingStats" class="stats hidden"></p>
+    </section>
+
+    <section class="actions" aria-label="Recording actions">
+      <button id="startFullBtn" class="action-button primary" type="button">
+        Record full tab
+      </button>
+      <button id="selectAreaBtn" class="action-button" type="button">
+        Select area
+      </button>
+      <button id="startAreaBtn" class="action-button primary hidden" type="button">
+        Start area recording
+      </button>
+      <button id="pauseBtn" class="action-button pause hidden" type="button">
+        Pause
+      </button>
+      <button id="stopBtn" class="action-button stop hidden" type="button">
+        Stop recording
+      </button>
+      <p id="actionError" class="action-error hidden" role="alert"></p>
+    </section>
+
+    <footer>Controls stay outside the captured page.</footer>
+  </main>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

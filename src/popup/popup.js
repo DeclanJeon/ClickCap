@@ -4,9 +4,13 @@ import { storageManager } from '../utils/storage.js';
 class PopupMain {
   constructor() {
     this.prefs = { ...DEFAULT_PREFERENCES };
+    this.activeTabId = null;
+    this.activeTabUrl = '';
     this.startBtn = document.getElementById('startBtn');
     this.shareBtn = document.getElementById('shareBtn');
     this.stopBtn = document.getElementById('stopBtn');
+    this.startBtn.disabled = true;
+    this.shareBtn.disabled = true;
     this.statusBox = document.getElementById('statusBox');
 
     this.controls = {
@@ -33,12 +37,18 @@ class PopupMain {
   async init() {
     try {
       await storageManager.init();
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      this.activeTabId = activeTab?.id ?? null;
+      this.activeTabUrl = activeTab?.url || '';
       const saved = await storageManager.getChromeStorage(STORAGE_KEYS.USER_PREFERENCES);
       if (saved) this.prefs = { ...this.prefs, ...saved };
       this.syncUI();
       await this.syncSessionState();
     } catch (e) {
       console.error('[Popup] Initialization error:', e);
+    } finally {
+      this.startBtn.disabled = false;
+      this.shareBtn.disabled = false;
     }
   }
 
@@ -76,11 +86,14 @@ class PopupMain {
     }
 
     this.setActiveControls();
+    this.stopBtn.classList.toggle('hidden', session.status === 'finalizing');
     const label = session.type === 'pons-link' ? 'PonsLink Cast' : 'Recording';
-    const status = session.status === 'selecting'
+    const status = session.status === 'finalizing'
+      ? `${label}: preparing the WebM download.`
+      : session.status === 'selecting'
       ? `${label}: select an area in the current tab.`
       : session.status === 'ready'
-        ? `${label}: area selected. Press START on the page dock.`
+        ? `${label}: area selected. Continue from the recording side panel.`
         : `${label}: active.`;
     this.showStatus(status, 'info');
   }
@@ -138,6 +151,13 @@ class PopupMain {
     }
   }
 
+  openSidePanelFromClick() {
+    if (this.activeTabId === null || !chrome.sidePanel?.open) return Promise.resolve();
+    return chrome.sidePanel.open({ tabId: this.activeTabId }).catch((error) => {
+      console.warn('[Popup] Could not open recording controls:', error);
+    });
+  }
+
   async startForPonsLink() {
     const mode = document.querySelector('input[name="mode"]:checked')?.value || 'full-screen';
     await this.onPrefChanged();
@@ -183,61 +203,38 @@ class PopupMain {
   }
 
   async start() {
-    const mode = document.querySelector('input[name="mode"]:checked')?.value || 'full-screen';
-    await this.onPrefChanged();
+    if (!this.activeTabId || this.activeTabUrl.startsWith('chrome://') ||
+        this.activeTabUrl.startsWith('chrome-extension://') || this.activeTabUrl.startsWith('edge://')) {
+      this.showStatus('This page cannot be recorded. Choose a regular web page and try again.', 'error');
+      return;
+    }
+
+    const sidePanelOpening = this.openSidePanelFromClick();
+    const preferencesSaving = this.onPrefChanged();
+    const startRequest = this.sendRuntimeMessage({
+      type: MESSAGE_TYPES.START_RECORDING,
+      data: {
+        mode: document.querySelector('input[name="mode"]:checked')?.value || 'full-screen',
+        preferences: this.prefs
+      }
+    }, 10000);
 
     this.startBtn.disabled = true;
     this.startBtn.textContent = '시작 중...';
 
-    let currentTab = null;
     try {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      currentTab = tabs[0];
-      if (!currentTab) {
-        throw new Error('활성 탭을 찾을 수 없습니다.');
+      const [, , response] = await Promise.all([
+        preferencesSaving,
+        sidePanelOpening,
+        startRequest
+      ]);
+      if (!response?.success) {
+        throw new Error(response?.error || '녹화 시작 실패');
       }
-      if (currentTab.url.startsWith('chrome://') ||
-          currentTab.url.startsWith('chrome-extension://') ||
-          currentTab.url.startsWith('edge://')) {
-        throw new Error('이 페이지는 녹화할 수 없습니다.');
-      }
-    } catch (e) {
-      this.showStatus(`Recording failed: ${e.message}`, 'error');
-      this.startBtn.disabled = false;
-      this.startBtn.textContent = '녹화 시작';
-      return;
-    }
-
-    try {
-      const res = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('녹화 시작 시간 초과 (10초)'));
-        }, 10000);
-
-        chrome.runtime.sendMessage({
-          type: MESSAGE_TYPES.START_RECORDING,
-          data: { mode, preferences: this.prefs }
-        }, (r) => {
-          clearTimeout(timeout);
-          if (chrome.runtime.lastError) {
-            reject(chrome.runtime.lastError);
-          } else {
-            resolve(r);
-          }
-        });
-      });
-
-      if (!res?.success) {
-        throw new Error(res?.error || '녹화 시작 실패');
-      }
-
       this.setActiveControls();
-      this.showStatus(mode === 'area'
-        ? 'Recording is waiting for area selection.'
-        : 'Recording is active.',
-      'info');
-    } catch (e) {
-      this.showStatus(`Recording failed: ${e.message}`, 'error');
+      this.showStatus('Recording controls are open in the side panel.', 'info');
+    } catch (error) {
+      this.showStatus(`Recording failed: ${error.message}`, 'error');
     } finally {
       this.startBtn.disabled = false;
       this.startBtn.textContent = '녹화 시작';

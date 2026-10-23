@@ -1796,20 +1796,8 @@ class ContentMain {
 
       this.isRecording = true; // ✅ 녹화 상태 플래그 설정
 
-      if (this.currentCrop) {
-        // ✅ 대기 모드에서 이미 표시된 overlay를 유지하거나 새로 표시
-        this.recordingOverlay.show(this.currentCrop);
-        console.log('✅ [ContentMain] Recording overlay shown');
-      } else {
-        console.warn('⚠️ [ContentMain] No crop area for recording overlay');
-      }
-
-      // ✅ 경고 토스트
-      const warningToast = document.createElement('div');
-      warningToast.style.cssText = 'all:initial;position:fixed;top:80px;right:20px;z-index:2147483647;background:rgba(255,152,0,.95);color:#fff;padding:12px 16px;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 6px 18px rgba(0,0,0,.3);max-width:300px;';
-      warningToast.textContent = '⚠️ 녹화 중 페이지를 이동하면 녹화가 자동 중지됩니다.';
-      document.body.appendChild(warningToast);
-      setTimeout(() => warningToast.remove(), 5000);
+      // Recording controls and crop borders must stay out of the captured page.
+      this.recordingOverlay.hide();
 
       return { success: true };
 

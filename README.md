@@ -20,8 +20,7 @@
 - **WebM Export** - Download recordings as playable WebM video
 - **Output Resolution** - Preserve source or cap output at 1080p, 720p, or 480p
 - � **Area Selection** - Record full screen or specific regions
-- �� **Live Controls** - Adjust zoom scale and duration in real-time
-- � **Smart Dock** - Floating control panel with recording stats
+- **Side Panel Controls** - Pause, resume, and stop without covering the captured page
 - �� **Keyboard Shortcuts** - Quick access to recording functions
 
 ---

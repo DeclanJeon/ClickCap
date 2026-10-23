@@ -3,6 +3,9 @@
 본 문서는 `docs/PRODUCT_DESIGN.md`의 실행 작업 목록이다. ClickCap은 WebM으로만 다운로드하고, 다른 포맷 변환은 제공하지 않는다.
 
 ## 완료된 이번 변경
+- [x] 녹화 시작 시 Chrome Side Panel을 열고, 전체/영역 시작과 pause/resume/stop 조작을 패널로 분리한다.
+- [x] Side Panel 녹화에서 페이지 도크/crop 표시를 숨기고, 정지 후 WebM 다운로드가 끝날 때까지 finalizing 상태를 유지한다.
+- [x] Chrome downloads API 완료/중단 상태에 따라 object URL을 다운로드 완료 후 정리한다.
 - [x] 팝업에 Original/1080p/720p/480p 출력 해상도 상한 선택기를 추가한다.
 - [x] `DEFAULT_PREFERENCES`와 저장/복원/실시간 설정 갱신에 `outputResolution`을 반영한다.
 - [x] Offscreen 출력 캔버스에서 종횡비 유지, 확대 금지로 출력 크기를 산출한다.
@@ -18,10 +21,12 @@
 ### B. 결과 확인 및 다운로드
 - 인코딩 중 취소/진행률/오류를 상태 모델에 연결하고 중복 stop 호출을 안전하게 처리한다.
 - 완료 파일에 대해 이름/크기/해상도/길이/포맷 정보를 표시한다. 사용자가 요청한 단일 다운로드 행동을 유지한다.
-- Chrome downloads API를 쓸 경우 `downloads` 권한 및 완료/취소/실패 이벤트를 처리한다. 기존 object URL 다운로드를 유지할 경우 파일명 중복 생성 문제를 고치고 URL 정리 시점을 검증한다.
+- [x] Chrome downloads API의 완료/중단 이벤트를 처리하고 완료 후 object URL을 해제한다.
+- 실제 ClickCap WebM 파일을 Linux 기본 플레이어에서 재생해 코덱/컨테이너 호환성을 E2E 검증한다.
 
 ### C. 녹화 제어와 설정
-- Pause/resume/cancel UI와 오류 메시지가 녹화 상태에 맞게 동작하는지 확인한다.
+- [x] Side Panel의 pause/resume/stop UI와 finalizing 상태를 녹화 상태에 연결한다.
+- 실제 Chrome에서 Side Panel 열기, pause/resume/stop, 영역 선택 및 페이지 도크 숨김을 E2E 확인한다.
 - 녹화 FPS/비트레이트/해상도/오디오 옵션 조합의 검증을 입력 경계에 둔다. 유효하지 않은 저장값은 기본값으로 정규화한다.
 - 실제 출력 차원이 표시된 녹화 상태와 예상 파일 용량 경고를 제공한다.
 
@@ -35,7 +40,7 @@
 1. `npm test` 기존 테스트 기준선을 실행한다.
 2. 해상도 계산의 단위 테스트를 유지한다: 원본보다 큰 상한에서도 확대되지 않음, landscape/portrait에서 종횡비 유지, 경계값 적용.
 3. 팝업 저장/복원과 offscreen 설정 전달을 테스트한다.
-4. Browser E2E: 영역 선택 후 WebM 녹화/정지/다운로드, 실제 파일 디코딩, 오류 경로를 수행한다.
+4. Browser E2E: 영역 선택 후 WebM 녹화/정지/다운로드, 실제 파일 디코딩, Side Panel UI 및 오류 경로를 수행한다. (현재 자동화 브라우저 연결이 없어 미실행)
 5. 각 구현 작업 후 `npm test`, `npm run lint` 실행. 현 package manifest의 lint/test 범위가 빠진 모듈을 포함하는지 확인한다.
 6. Chrome 116+에서 전체 화면, 선택 영역, 1080/720/480/source, 세로/가로 화면 및 audio on/off를 수동 확인한다.
 
